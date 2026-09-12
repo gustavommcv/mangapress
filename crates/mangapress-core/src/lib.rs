@@ -13,6 +13,7 @@ pub mod ebook;
 pub mod error;
 pub mod manga;
 pub mod metadata;
+pub mod natural_sort;
 pub mod pipeline;
 pub mod profile;
 pub mod quantize;

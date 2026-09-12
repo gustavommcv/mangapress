@@ -38,6 +38,19 @@ pub struct Cli {
     #[arg(short, long)]
     pub upscale: bool,
 
+    /// Stretch images to the device's resolution, ignoring aspect ratio.
+    #[arg(short, long)]
+    pub stretch: bool,
+
+    /// Crop to fill the screen (ignores --upscale).
+    #[arg(long)]
+    pub wallpaper: bool,
+
+    /// Disable autodetection and force white borders instead of padding
+    /// with the page's detected background color (CBZ/PDF output only).
+    #[arg(long)]
+    pub whiteborders: bool,
+
     /// Output format.
     #[arg(short, long, value_enum, default_value_t = Format::Epub)]
     pub format: Format,

@@ -1,0 +1,17 @@
+[package]
+name = "mangapress-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI entry point for mangapress."
+default-run = "mangapress"
+
+[[bin]]
+name = "mangapress"
+path = "src/main.rs"
+
+[dependencies]
+mangapress-core = { path = "../mangapress-core" }
+clap = { workspace = true }
+anyhow = { workspace = true }

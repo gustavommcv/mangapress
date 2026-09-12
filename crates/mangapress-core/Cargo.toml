@@ -1,0 +1,18 @@
+[package]
+name = "mangapress-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Manga/comic e-ink conversion pipeline: device profiles, image processing, and EPUB/CBZ/PDF generation."
+
+[dependencies]
+image = { workspace = true }
+imageproc = { workspace = true }
+rustfft = { workspace = true }
+zip = { workspace = true }
+rayon = { workspace = true }
+thiserror = { workspace = true }
+slug = { workspace = true }
+
+[dev-dependencies]

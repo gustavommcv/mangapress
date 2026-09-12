@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = ["crates/mangapress-core", "crates/mangapress-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/gustavommcv/mangapress"
+
+[workspace.dependencies]
+image = "0.25"
+imageproc = "0.25"
+rustfft = "6"
+zip = "2"
+rayon = "1"
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+anyhow = "1"
+slug = "0.1"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

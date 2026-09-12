@@ -1,0 +1,7 @@
+/target
+**/*.rs.bk
+.DS_Store
+
+# Real comic/manga fixtures must never be committed (copyright).
+# Only synthetic/generated fixtures belong under tests/fixtures/.
+/tests/fixtures/real/

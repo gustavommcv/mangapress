@@ -18,6 +18,9 @@ pub enum Error {
 
     #[error("unknown device profile code: {0}")]
     UnknownProfile(String),
+
+    #[error("cannot build an ebook with no pages")]
+    EmptyBook,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

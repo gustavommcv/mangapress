@@ -5,3 +5,6 @@
 # Real comic/manga fixtures must never be committed (copyright).
 # Only synthetic/generated fixtures belong under tests/fixtures/.
 /tests/fixtures/real/
+*.cbz
+*.cbr
+*.cb7

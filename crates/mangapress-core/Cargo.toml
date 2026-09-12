@@ -16,3 +16,4 @@ thiserror = { workspace = true }
 slug = { workspace = true }
 
 [dev-dependencies]
+zip = { workspace = true }

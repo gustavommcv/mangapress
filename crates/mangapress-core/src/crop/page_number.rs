@@ -48,7 +48,7 @@ pub fn get_bbox_crop_margin_page_number(
     power: f32,
     background: Background,
 ) -> Option<Bbox> {
-    let prepped = super::binarize_for_crop(img, power, background);
+    let prepped = super::binarize_for_crop(img, power, background, true);
     let bbox = prepped.bbox?;
     let (w, h) = img.dimensions();
 
@@ -98,13 +98,17 @@ pub fn get_bbox_crop_margin_page_number(
         .map(|b| b.2)
         .fold(None, |acc: Option<f64>, v| {
             Some(acc.map_or(v, |a| a.min(v)))
-        })
-        .unwrap_or(0.0);
+        });
 
-    let boxes_in_same_y_range: Vec<RowBox> = boxes
-        .into_iter()
-        .filter(|b| b.3 >= min_y_of_lowest_boxes)
-        .collect();
+    // No box reaches the window's very last row -- there's no bottom anchor
+    // to restrict against, so there's nothing plausibly page-number-shaped
+    // near the bottom edge. Falling back to a sentinel here (e.g. 0.0) would
+    // make the `>=` filter below accept every remaining box in the window,
+    // defeating its own purpose.
+    let boxes_in_same_y_range: Vec<RowBox> = match min_y_of_lowest_boxes {
+        Some(min_y) => boxes.into_iter().filter(|b| b.3 >= min_y).collect(),
+        None => Vec::new(),
+    };
 
     let max_shape_w = w as f64 * MAX_SHAPE_WIDTH_FRAC;
     let max_shape_h = (h as f64 * MAX_SHAPE_HEIGHT_FRAC).max(3.0);
@@ -115,7 +119,7 @@ pub fn get_bbox_crop_margin_page_number(
 
     let restrict_to = if should_force_crop {
         let top_row = boxes_in_same_y_range[0].2;
-        let new_bottom = bbox.bottom as f64 - (window_h as f64 - top_row + 1.0);
+        let new_bottom = bbox.bottom as f64 - (window_h as f64 - top_row);
         new_bottom.max(0.0) as u32
     } else {
         h

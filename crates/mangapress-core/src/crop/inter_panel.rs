@@ -51,15 +51,15 @@ const KEEP: f64 = 0.04;
 const CROP_POWER: f32 = 1.0;
 
 pub fn crop_empty_inter_panel_sections(
-    page: &GrayImage,
+    page: GrayImage,
     mode: InterPanelMode,
     background: Background,
 ) -> GrayImage {
     if mode == InterPanelMode::Disabled {
-        return page.clone();
+        return page;
     }
 
-    let binarized = binarize_for_crop(page, CROP_POWER, background).binary;
+    let binarized = binarize_for_crop(&page, CROP_POWER, background, false).binary;
 
     let rows_to_remove = empty_sections(&binarized, true);
     let cols_to_remove = if mode == InterPanelMode::Both {
@@ -68,7 +68,7 @@ pub fn crop_empty_inter_panel_sections(
         Vec::new()
     };
 
-    delete_rows_and_cols(page, &rows_to_remove, &cols_to_remove)
+    delete_rows_and_cols(&page, &rows_to_remove, &cols_to_remove)
 }
 
 /// `empty_sections()`. `horizontal = true` finds empty *rows* (to delete,
@@ -176,8 +176,11 @@ mod tests {
     #[test]
     fn disabled_mode_is_a_no_op() {
         let img = page_with_two_panels_stacked(250, 350);
-        let out =
-            crop_empty_inter_panel_sections(&img, InterPanelMode::Disabled, Background::White);
+        let out = crop_empty_inter_panel_sections(
+            img.clone(),
+            InterPanelMode::Disabled,
+            Background::White,
+        );
         assert_eq!(out, img);
     }
 
@@ -185,7 +188,7 @@ mod tests {
     fn horizontal_mode_removes_most_of_a_wide_gutter() {
         let img = page_with_two_panels_stacked(250, 350); // 100px gutter
         let out =
-            crop_empty_inter_panel_sections(&img, InterPanelMode::Horizontal, Background::White);
+            crop_empty_inter_panel_sections(img, InterPanelMode::Horizontal, Background::White);
         // Most of the 100px gutter should be gone, but KEEP=4% leaves a
         // small margin -- so height shrinks by roughly 90-99px, not the
         // full 100, and not zero.
@@ -200,7 +203,7 @@ mod tests {
         // the near-border check (this is what margin cropping is for).
         let img = page_with_two_panels_stacked(0, 50);
         let out =
-            crop_empty_inter_panel_sections(&img, InterPanelMode::Horizontal, Background::White);
+            crop_empty_inter_panel_sections(img, InterPanelMode::Horizontal, Background::White);
         assert_eq!(
             out.height(),
             H,
@@ -218,15 +221,18 @@ mod tests {
                 Luma([0])
             }
         });
-        let horizontal_only =
-            crop_empty_inter_panel_sections(&img, InterPanelMode::Horizontal, Background::White);
+        let horizontal_only = crop_empty_inter_panel_sections(
+            img.clone(),
+            InterPanelMode::Horizontal,
+            Background::White,
+        );
         assert_eq!(
             horizontal_only.width(),
             W,
             "Horizontal mode must not touch a vertical gutter"
         );
 
-        let both = crop_empty_inter_panel_sections(&img, InterPanelMode::Both, Background::White);
+        let both = crop_empty_inter_panel_sections(img, InterPanelMode::Both, Background::White);
         assert!(
             both.width() < W,
             "Both mode should remove the vertical gutter too"
@@ -244,7 +250,7 @@ mod tests {
             }
         });
         let out =
-            crop_empty_inter_panel_sections(&img, InterPanelMode::Horizontal, Background::Dark);
+            crop_empty_inter_panel_sections(img, InterPanelMode::Horizontal, Background::Dark);
         assert!(
             out.height() < H,
             "dark-background gutter should still be detected and cropped"

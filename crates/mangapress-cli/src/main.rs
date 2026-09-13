@@ -13,6 +13,16 @@ use mangapress_core::pipeline::{
 use mangapress_core::profile::Profile;
 use std::io::Write as _;
 
+/// A resolved book title (from `--title`, `ComicInfo.xml`'s `Series`/`Title`,
+/// or the input filename) can contain characters that are illegal in a
+/// filename on Windows, or that `/`/`\` would misread as path separators on
+/// any platform (e.g. `--metadatatitle combine` appends `": Title"`) —
+/// replace the reserved set with `-` before using the title as an output
+/// filename.
+fn sanitize_filename(name: &str) -> String {
+    name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "-")
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -100,8 +110,9 @@ fn main() -> anyhow::Result<()> {
             Cropping::Margins => CroppingMode::Margins,
             Cropping::MarginsAndPageNumbers => CroppingMode::MarginsAndPageNumbers,
         },
-        cropping_power: 1.0,
-        cropping_minimum: 0.0,
+        cropping_power: cli.croppingpower,
+        cropping_minimum: cli.croppingminimum,
+        preserve_margin_percent: cli.preservemargin,
         inter_panel_crop: match cli.interpanelcrop {
             InterPanelCrop::Disabled => {
                 mangapress_core::crop::inter_panel::InterPanelMode::Disabled
@@ -184,7 +195,9 @@ fn main() -> anyhow::Result<()> {
         Format::Pdf => "pdf",
     };
     let output_path = match cli.output {
-        Some(path) if path.is_dir() => path.join(format!("{title}.{extension}")),
+        Some(path) if path.is_dir() => {
+            path.join(format!("{}.{extension}", sanitize_filename(&title)))
+        }
         Some(path) => path,
         None => cli.input.with_extension(extension),
     };

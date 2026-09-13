@@ -37,11 +37,20 @@
 use image::{GrayImage, Luma};
 use rustfft::num_complex::Complex32;
 use rustfft::FftPlanner;
+use std::cell::RefCell;
 
 const FREQ_THRESHOLD: f64 = 0.30;
 const TARGET_ANGLE_DEG: f64 = 135.0;
 const ANGLE_TOLERANCE_DEG: f64 = 10.0;
 const ATTENUATION_FACTOR: f32 = 0.10;
+
+thread_local! {
+    // `FftPlanner` caches its computed algorithms per transform length --
+    // reusing one across pages (nearly all of which share the same
+    // post-resize dimensions) avoids replanning the same row/column FFTs on
+    // every single page.
+    static PLANNER: RefCell<FftPlanner<f32>> = RefCell::new(FftPlanner::new());
+}
 
 pub fn erase_rainbow_artifacts_gray(page: &GrayImage) -> GrayImage {
     let (w, h) = page.dimensions();
@@ -55,12 +64,13 @@ pub fn erase_rainbow_artifacts_gray(page: &GrayImage) -> GrayImage {
         .map(|p| Complex32::new(p[0] as f32, 0.0))
         .collect();
 
-    let mut planner = FftPlanner::<f32>::new();
-    fft_2d(&mut spectrum, w as usize, h as usize, &mut planner, false);
+    PLANNER.with(|planner| {
+        let mut planner = planner.borrow_mut();
+        fft_2d(&mut spectrum, w as usize, h as usize, &mut planner, false);
+        attenuate_diagonal_frequencies(&mut spectrum, w as usize, h as usize);
+        fft_2d(&mut spectrum, w as usize, h as usize, &mut planner, true);
+    });
 
-    attenuate_diagonal_frequencies(&mut spectrum, w as usize, h as usize);
-
-    fft_2d(&mut spectrum, w as usize, h as usize, &mut planner, true);
     let scale = 1.0 / (w as f32 * h as f32);
 
     GrayImage::from_fn(w, h, |x, y| {

@@ -25,7 +25,6 @@
 use super::Chapter;
 use crate::error::{Error, Result};
 use crate::manga::ReadingDirection;
-use image::GenericImageView;
 use std::hash::{Hash, Hasher};
 
 pub struct EpubOptions {
@@ -72,8 +71,12 @@ pub fn build_epub(chapters: &[Chapter], options: &EpubOptions) -> Result<Vec<u8>
 
         for (page_index, page) in chapter.pages.iter().enumerate() {
             page_counter += 1;
-            let (width, height) = image::load_from_memory(&page.bytes)
-                .map(|img| img.dimensions())
+            // Read just the encoded header, not a full pixel decode -- this
+            // only needs the two dimensions for the XHTML viewport meta tag.
+            let (width, height) = image::ImageReader::new(std::io::Cursor::new(&page.bytes))
+                .with_guessed_format()
+                .ok()
+                .and_then(|reader| reader.into_dimensions().ok())
                 .unwrap_or((0, 0));
 
             let dir = format!("c{:04}", chapter_index + 1);

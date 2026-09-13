@@ -2,7 +2,6 @@
 //! `ComicPageParser`/`ComicPage` (`image.py`) and `imgFileProcessing()`
 //! (`comic2ebook.py`).
 
-pub mod page;
 pub mod spread;
 
 use crate::crop::{self, Background, CropPolicy};
@@ -24,8 +23,16 @@ pub struct PipelineOptions {
     pub height_override: Option<u32>,
     pub manga_style: bool,
     pub cropping: CroppingMode,
+    /// `--croppingpower`. Higher power crops through more.
     pub cropping_power: f32,
+    /// `--croppingminimum`, 0-100: only actually crop if doing so would keep
+    /// at least this percentage of the page's area. Converted to
+    /// [`crate::crop::CropPolicy::minimum_area_ratio`]'s 0.0-1.0 fraction in
+    /// [`crop_policy`].
     pub cropping_minimum: f32,
+    /// `--preservemargin`, 0-100: back the computed crop off by this
+    /// percentage after the 10% cap, so *some* margin is deliberately kept.
+    pub preserve_margin_percent: f32,
     pub inter_panel_crop: crate::crop::inter_panel::InterPanelMode,
     pub splitter: SplitterMode,
     pub upscale: bool,
@@ -143,7 +150,7 @@ fn finish_page(
     };
 
     let page = crop::inter_panel::crop_empty_inter_panel_sections(
-        &page,
+        page,
         options.inter_panel_crop,
         Background::White,
     );
@@ -199,8 +206,8 @@ fn finish_page(
 fn crop_policy(options: &PipelineOptions) -> CropPolicy {
     CropPolicy {
         power: options.cropping_power,
-        minimum_area_ratio: options.cropping_minimum as f64,
-        preserve_margin_percent: 0.0,
+        minimum_area_ratio: (options.cropping_minimum as f64) / 100.0,
+        preserve_margin_percent: options.preserve_margin_percent,
         // fillCheck() isn't ported yet -- see process_page's fill comment.
         background: Background::White,
     }

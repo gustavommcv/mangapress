@@ -30,6 +30,21 @@ pub struct Cli {
     #[arg(short, long, value_enum, default_value_t = Cropping::MarginsAndPageNumbers)]
     pub cropping: Cropping,
 
+    /// How aggressively margin/page-number cropping detects content —
+    /// higher crops through more.
+    #[arg(long, default_value_t = 1.0)]
+    pub croppingpower: f32,
+
+    /// Only actually crop if doing so would keep at least this percentage
+    /// (0-100) of the page's area.
+    #[arg(long, default_value_t = 0.0)]
+    pub croppingminimum: f32,
+
+    /// Back off the computed crop by this percentage (0-100) after the 10%
+    /// cap, so some margin is deliberately kept.
+    #[arg(long, default_value_t = 0.0)]
+    pub preservemargin: f32,
+
     /// Double-page spread handling.
     #[arg(short = 'r', long, value_enum, default_value_t = Splitter::Split)]
     pub splitter: Splitter,

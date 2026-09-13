@@ -88,9 +88,9 @@ pub struct CropBox {
 /// same wrapper applied to two different detectors.
 #[derive(Debug, Clone, Copy)]
 pub struct CropPolicy {
-    /// `-c/--croppingpower`. Higher power crops through more.
+    /// `--croppingpower`. Higher power crops through more.
     pub power: f32,
-    /// `--cm/--croppingminimum`: only actually crop if the crop region
+    /// `--croppingminimum`: only actually crop if the crop region
     /// would keep at least this fraction of the page's area.
     pub minimum_area_ratio: f64,
     /// `--preservemargin`: back the computed crop off by this percentage
@@ -162,6 +162,10 @@ fn apply_preserve_margin(
     (w, h): (u32, u32),
     preserve_margin_percent: f32,
 ) -> CropBox {
+    // Clamped to keep `ratio` in [0.0, 1.0]: outside that range `right`
+    // could end up left of `left`, and `apply_crop`'s `right - left` would
+    // underflow and panic.
+    let preserve_margin_percent = preserve_margin_percent.clamp(0.0, 100.0);
     let ratio = 1.0 - (preserve_margin_percent as f64) / 100.0;
     let (w, h) = (w as f64, h as f64);
     CropBox {
@@ -265,7 +269,17 @@ pub struct Binarized {
     pub threshold: f32,
 }
 
-pub fn binarize_for_crop(img: &GrayImage, power: f32, background: Background) -> Binarized {
+/// `ignore_edge_noise` controls whether [`ignore_pixels_near_edge`] runs
+/// before the bbox is taken: margin and page-number cropping want it
+/// (matches `page_number_crop_alg.py`'s own preprocessing), inter-panel
+/// cropping doesn't — it applies its own, distinct border exclusion instead
+/// (see [`inter_panel`]'s module docs).
+pub fn binarize_for_crop(
+    img: &GrayImage,
+    power: f32,
+    background: Background,
+    ignore_edge_noise: bool,
+) -> Binarized {
     let prepped = match background {
         Background::White => img.clone(),
         Background::Dark => {
@@ -278,7 +292,9 @@ pub fn binarize_for_crop(img: &GrayImage, power: f32, background: Background) ->
     let grayscale = box_blur_radius1(&crate::contrast::autocontrast_cutoff(&prepped, 1));
     let threshold = threshold_from_power(power);
     let mut binary = threshold_binary(&grayscale, threshold);
-    ignore_pixels_near_edge(&mut binary);
+    if ignore_edge_noise {
+        ignore_pixels_near_edge(&mut binary);
+    }
     let bbox = get_bbox(&binary);
 
     Binarized {

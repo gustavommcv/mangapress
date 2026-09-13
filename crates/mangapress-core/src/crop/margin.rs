@@ -18,7 +18,7 @@ use image::GrayImage;
 /// noise, threshold, clear sparse edge-noise, then take the bounding box of
 /// what's left.
 pub fn get_bbox_crop_margin(img: &GrayImage, power: f32, background: Background) -> Option<Bbox> {
-    super::binarize_for_crop(img, power, background).bbox
+    super::binarize_for_crop(img, power, background, true).bbox
 }
 
 /// `cropMargin()` + `maybeCrop()`.

@@ -114,10 +114,37 @@ pub fn pad(img: &GrayImage, target: (u32, u32), filter: FilterType, fill: u8) ->
     let (cw, ch) = contained.dimensions();
     let (tw, th) = target;
     let mut out = GrayImage::from_pixel(tw, th, Luma([fill]));
-    let x_off = tw.saturating_sub(cw) / 2;
-    let y_off = th.saturating_sub(ch) / 2;
+    let x_off = round_half_even(tw.saturating_sub(cw) as f64 * 0.5);
+    let y_off = round_half_even(th.saturating_sub(ch) as f64 * 0.5);
     image::imageops::overlay(&mut out, &contained, x_off as i64, y_off as i64);
     out
+}
+
+/// Round-half-to-even ("banker's rounding"), matching Python's `round()`.
+/// `ImageOps.pad()`'s centering offset is `round((target - resized) * 0.5)`
+/// in real Pillow, and every odd remainder here lands exactly on a `.5`
+/// boundary (the value being rounded is always `(non-negative integer) *
+/// 0.5`) -- so which rounding rule is used actually matters, not just a
+/// style choice. A prior version of this function used plain truncating
+/// integer division (`remainder / 2`) instead of rounding at all, which
+/// happened to agree with Pillow only when `floor(remainder / 2)` was even
+/// and was off by one pixel otherwise. Confirmed directly against real
+/// Pillow output, not assumed: a 400x201 image padded to 400x400 has a
+/// 199px vertical remainder, and Pillow's `round(199 * 0.5)` -- `round(99.5)`
+/// -- is `100` (nearest even), while the old `199 / 2` gave `99`.
+fn round_half_even(x: f64) -> u32 {
+    let floor = x.floor();
+    let diff = x - floor;
+    let rounded = if diff < 0.5 {
+        floor
+    } else if diff > 0.5 {
+        floor + 1.0
+    } else if (floor as i64).rem_euclid(2) == 0 {
+        floor
+    } else {
+        floor + 1.0
+    };
+    rounded as u32
 }
 
 /// `ImageOps.fit()`: scale so `target` is entirely filled (may exceed it on
@@ -182,6 +209,34 @@ mod tests {
         let out = contain(&img, (400, 400), FilterType::Lanczos3);
         // Width-limited: 400/1000 = 0.4 scale -> 400x200.
         assert_eq!(out.dimensions(), (400, 200));
+    }
+
+    #[test]
+    fn round_half_even_matches_pythons_banker_rounding() {
+        assert_eq!(round_half_even(99.5), 100); // nearest even is 100
+        assert_eq!(round_half_even(100.5), 100); // nearest even is 100
+        assert_eq!(round_half_even(3.0), 3); // no ambiguity
+        assert_eq!(round_half_even(0.0), 0);
+    }
+
+    #[test]
+    fn pad_centers_with_an_odd_remainder_like_pillow_does() {
+        // 999x501 contained into 400x400 lands at 400x201 -- an odd
+        // (199px) vertical remainder. Confirmed directly against real
+        // Pillow (ImageOps.pad): the offset is 100, not floor(199/2)=99.
+        let img = GrayImage::from_pixel(999, 501, Luma([0]));
+        let out = pad(&img, (400, 400), FilterType::Lanczos3, 200);
+        assert_eq!(out.dimensions(), (400, 400));
+        assert_eq!(
+            out.get_pixel(200, 99)[0],
+            200,
+            "row 99 should still be fill"
+        );
+        assert_eq!(
+            out.get_pixel(200, 100)[0],
+            0,
+            "row 100 should already be content"
+        );
     }
 
     #[test]

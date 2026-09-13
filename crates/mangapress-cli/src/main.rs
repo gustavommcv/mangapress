@@ -4,7 +4,7 @@ use anyhow::{bail, Context};
 use args::{Cli, Cropping, Format, InterPanelCrop, Splitter};
 use clap::Parser;
 use mangapress_core::archive::{cbz::extract_cbz, folder::read_folder, SourceEntry};
-use mangapress_core::ebook::{cbz_out, epub, group_into_chapters, Chapter, Page};
+use mangapress_core::ebook::{cbz_out, epub, group_into_chapters, pdf, Chapter, Page};
 use mangapress_core::manga::ReadingDirection;
 use mangapress_core::pipeline::{
     process_page, CroppingMode, OutputFormat, PipelineOptions, SplitterMode,
@@ -29,10 +29,6 @@ fn main() -> anyhow::Result<()> {
              resolution, pass both --customwidth and --customheight to set one",
             cli.profile
         );
-    }
-
-    if matches!(cli.format, Format::Pdf) {
-        bail!("PDF output is not implemented yet (see docs/adr/ for what's built so far)");
     }
 
     let title = cli.title.clone().unwrap_or_else(|| {
@@ -148,7 +144,7 @@ fn main() -> anyhow::Result<()> {
             },
         )?,
         Format::Cbz => cbz_out::build_cbz(&processed_chapters)?,
-        Format::Pdf => unreachable!("checked above"),
+        Format::Pdf => pdf::build_pdf(&processed_chapters)?,
     };
 
     let extension = match cli.format {

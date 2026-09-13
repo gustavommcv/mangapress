@@ -14,6 +14,7 @@ zip = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }
 slug = { workspace = true }
+printpdf = { workspace = true }
 
 [dev-dependencies]
 zip = { workspace = true }

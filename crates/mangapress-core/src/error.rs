@@ -21,6 +21,9 @@ pub enum Error {
 
     #[error("cannot build an ebook with no pages")]
     EmptyBook,
+
+    #[error("PDF error: {0}")]
+    Pdf(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

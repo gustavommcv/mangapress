@@ -61,6 +61,21 @@ pub struct Cli {
     #[arg(long)]
     pub rotateright: bool,
 
+    /// Apply gamma correction to linearize the image. Values below 0.1 mean
+    /// "use the device profile's own gamma" (always 1.0, i.e. a no-op,
+    /// today).
+    #[arg(short, long)]
+    pub gamma: Option<f32>,
+
+    /// Set the most common dark pixel value as the black point before
+    /// autocontrast.
+    #[arg(long)]
+    pub autolevel: bool,
+
+    /// Disable autocontrast.
+    #[arg(long)]
+    pub noautocontrast: bool,
+
     /// Output format.
     #[arg(short, long, value_enum, default_value_t = Format::Epub)]
     pub format: Format,

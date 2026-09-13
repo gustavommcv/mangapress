@@ -45,6 +45,10 @@ pub struct PipelineOptions {
     /// [`crate::quantize`]'s module docs for the full picture.
     pub force_png: bool,
     pub gamma: Option<f32>,
+    /// `--autolevel`: run [`crate::contrast::autolevel`] before autocontrast.
+    pub autolevel: bool,
+    /// `--noautocontrast`: skip autocontrast entirely.
+    pub noautocontrast: bool,
 }
 
 impl PipelineOptions {
@@ -82,19 +86,19 @@ pub enum OutputFormat {
 }
 
 /// Processes a single source page: decode -> grayscale -> spread
-/// decide/execute -> (per resulting page) crop -> resize -> quantize (if
-/// `--forcepng`) -> encode. A double-page spread can expand into two split
-/// halves and/or a rotated whole (see [`spread::execute`]) *before*
-/// cropping — matching upstream's order, where spread detection runs on
-/// the original page and crop/resize apply independently to each resulting
-/// piece, not the other way around.
+/// decide/execute -> (per resulting page) crop -> gamma -> autocontrast ->
+/// resize -> quantize (if `--forcepng`) -> encode. A double-page spread can
+/// expand into two split halves and/or a rotated whole (see
+/// [`spread::execute`]) *before* cropping — matching upstream's order,
+/// where spread detection runs on the original page and crop/resize apply
+/// independently to each resulting piece, not the other way around.
 ///
 /// Also not yet applied, tracked as gaps rather than silently skipped:
-/// gamma correction, autocontrast, inter-panel crop, and rainbow-artifact
-/// removal — each exists only as a `todo!()` in its own module still. What
-/// *is* applied (spread, crop, resize, quantize) has its own fixture-backed
-/// tests in [`spread`], [`crate::crop`], [`crate::resize`], and
-/// [`crate::quantize`]; this function's job is only to wire already-
+/// inter-panel crop and rainbow-artifact removal — each exists only as a
+/// `todo!()` in its own module still. What *is* applied (spread, crop,
+/// gamma, autocontrast, resize, quantize) has its own fixture-backed tests
+/// in [`spread`], [`crate::crop`], [`crate::contrast`], [`crate::resize`],
+/// and [`crate::quantize`]; this function's job is only to wire already-
 /// validated pieces together in the right order, not to introduce new
 /// heuristics of its own.
 pub fn process_page(
@@ -135,6 +139,18 @@ fn finish_page(
                 None => page,
             }
         }
+    };
+
+    let effective_gamma = options
+        .gamma
+        .filter(|&g| g >= 0.1)
+        .unwrap_or(options.profile.gamma);
+    let page = crate::contrast::gamma_correct(&page, effective_gamma);
+
+    let page = if options.noautocontrast {
+        page
+    } else {
+        crate::contrast::autocontrast(&page, options.autolevel)
     };
 
     let resize_options = ResizeOptions {

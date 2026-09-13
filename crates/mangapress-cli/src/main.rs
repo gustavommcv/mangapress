@@ -99,7 +99,9 @@ fn main() -> anyhow::Result<()> {
             Format::Cbz => OutputFormat::Cbz,
             Format::Pdf => OutputFormat::Pdf,
         },
-        gamma: None,
+        gamma: cli.gamma,
+        autolevel: cli.autolevel,
+        noautocontrast: cli.noautocontrast,
     };
 
     let mut processed_chapters = Vec::with_capacity(source_chapters.len());

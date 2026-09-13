@@ -11,7 +11,7 @@ use mangapress_core::pipeline::{
     process_page, CroppingMode, OutputFormat, PipelineOptions, SplitterMode,
 };
 use mangapress_core::profile::Profile;
-use std::io::Write as _;
+use std::io::{IsTerminal, Write as _};
 
 /// A resolved book title (from `--title`, `ComicInfo.xml`'s `Series`/`Title`,
 /// or the input filename) can contain characters that are illegal in a
@@ -26,11 +26,46 @@ fn sanitize_filename(name: &str) -> String {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    let profile = Profile::by_code(&cli.profile)
-        .with_context(|| format!("unknown device profile '{}'", cli.profile))?;
+    if cli.list_profiles {
+        // `writeln!` + break-on-error, not `println!`, because `println!`
+        // panics on a write failure -- including the very ordinary
+        // `mangapress --list-profiles | head` closing its end of the pipe
+        // early. Piping a listing into `head`/`grep`/`less` should just
+        // stop quietly, like it does for any real Unix tool.
+        let mut stdout = std::io::stdout().lock();
+        for p in mangapress_core::profile::PROFILES {
+            if writeln!(
+                stdout,
+                "{:<10} {:<40} {}x{}",
+                p.code, p.display_name, p.width, p.height
+            )
+            .is_err()
+            {
+                break;
+            }
+        }
+        return Ok(());
+    }
+    let quiet = cli.quiet;
+    // Guaranteed present: clap's `required_unless_present` on `--list-profiles`
+    // means we only get here when `input` was actually passed.
+    let input = cli.input.expect("input is required unless --list-profiles");
 
-    if !cli.input.exists() {
-        bail!("input path does not exist: {}", cli.input.display());
+    let profile = Profile::by_code(&cli.profile).with_context(|| {
+        match Profile::closest_code(&cli.profile) {
+            Some(suggestion) => format!(
+                "unknown device profile '{}' -- did you mean '{suggestion}'? (see --list-profiles)",
+                cli.profile
+            ),
+            None => format!(
+                "unknown device profile '{}' (see --list-profiles)",
+                cli.profile
+            ),
+        }
+    })?;
+
+    if !input.exists() {
+        bail!("input path does not exist: {}", input.display());
     }
 
     let (width, height) = profile.effective_resolution(cli.customwidth, cli.customheight);
@@ -42,30 +77,31 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
-    let fallback_title = cli
-        .input
+    let fallback_title = input
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Untitled".to_string());
 
-    println!(
-        "mangapress: converting '{}' for {} ({width}x{height}, {} gray levels), manga_style={}, format={:?}",
-        cli.input.display(),
-        profile.display_name,
-        profile.palette.levels(),
-        cli.manga_style,
-        cli.format,
-    );
-
-    let mut source_entries: Vec<SourceEntry> = if cli.input.is_dir() {
-        read_folder(&cli.input)
-    } else {
-        extract_cbz(&cli.input)
+    if !quiet {
+        eprintln!(
+            "mangapress: converting '{}' for {} ({width}x{height}, {} gray levels), manga_style={}, format={:?}",
+            input.display(),
+            profile.display_name,
+            profile.palette.levels(),
+            cli.manga_style,
+            cli.format,
+        );
     }
-    .with_context(|| format!("reading input from {}", cli.input.display()))?;
+
+    let mut source_entries: Vec<SourceEntry> = if input.is_dir() {
+        read_folder(&input)
+    } else {
+        extract_cbz(&input)
+    }
+    .with_context(|| format!("reading input from {}", input.display()))?;
 
     if source_entries.is_empty() {
-        bail!("no files found in {}", cli.input.display());
+        bail!("no files found in {}", input.display());
     }
 
     let comic_info_xml = metadata::extract_comic_info_entry(&mut source_entries);
@@ -74,9 +110,9 @@ fn main() -> anyhow::Result<()> {
         .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
         .map(|xml| metadata::parse_comic_info_xml(&xml))
         .transpose()
-        .with_context(|| format!("parsing ComicInfo.xml from {}", cli.input.display()))?;
-    if comic_info.is_some() {
-        println!("found ComicInfo.xml");
+        .with_context(|| format!("parsing ComicInfo.xml from {}", input.display()))?;
+    if comic_info.is_some() && !quiet {
+        eprintln!("found ComicInfo.xml");
     }
 
     let resolved = metadata::resolve(
@@ -94,11 +130,35 @@ fn main() -> anyhow::Result<()> {
     let author = resolved.authors.join(", ");
 
     let source_chapters = group_into_chapters(source_entries);
+    let total_chapters = source_chapters.len();
     let total_pages: usize = source_chapters.iter().map(|c| c.pages.len()).sum();
-    println!(
-        "found {} chapter(s), {total_pages} page(s) total",
-        source_chapters.len()
-    );
+    if !quiet {
+        eprintln!("found {total_chapters} chapter(s), {total_pages} page(s) total");
+    }
+
+    let extension = match cli.format {
+        Format::Epub => "epub",
+        Format::Cbz => "cbz",
+        Format::Pdf => "pdf",
+    };
+    let output_path = match &cli.output {
+        Some(path) if path.is_dir() => {
+            path.join(format!("{}.{extension}", sanitize_filename(&title)))
+        }
+        Some(path) => path.clone(),
+        None => input.with_extension(extension),
+    };
+
+    if cli.dry_run {
+        println!("dry run -- no pages will be processed, nothing will be written");
+        println!("title: {title}");
+        println!("author: {author}");
+        println!("format: {:?}", cli.format);
+        println!("device: {} ({width}x{height})", profile.display_name);
+        println!("chapters: {total_chapters}, pages: {total_pages}");
+        println!("would write: {}", output_path.display());
+        return Ok(());
+    }
 
     let pipeline_options = PipelineOptions {
         profile,
@@ -144,16 +204,28 @@ fn main() -> anyhow::Result<()> {
         erase_rainbow: cli.eraserainbow,
     };
 
-    let mut processed_chapters = Vec::with_capacity(source_chapters.len());
+    // Interactive terminals get a live per-page counter (overwritten in
+    // place via `\r`); redirected/piped output gets one plain line per
+    // chapter instead, so a log file doesn't fill up with carriage returns.
+    let progress_is_tty = std::io::stderr().is_terminal();
+
+    let mut processed_chapters = Vec::with_capacity(total_chapters);
     let mut page_count = 0usize;
-    for chapter in source_chapters {
+    let mut source_page_count = 0usize;
+    for (chapter_index, chapter) in source_chapters.into_iter().enumerate() {
+        let chapter_title = chapter.title.clone();
         let mut pages = Vec::with_capacity(chapter.pages.len());
         for source_page in chapter.pages {
             let outputs = process_page(&source_page.bytes, &pipeline_options)
-                .with_context(|| format!("processing a page in chapter '{}'", chapter.title))?;
+                .with_context(|| format!("processing a page in chapter '{chapter_title}'"))?;
             for (extension, bytes) in outputs {
                 pages.push(Page { extension, bytes });
                 page_count += 1;
+            }
+            source_page_count += 1;
+            if !quiet && progress_is_tty {
+                eprint!("\rprocessing page {source_page_count}/{total_pages}");
+                std::io::stderr().flush().ok();
             }
         }
         processed_chapters.push(Chapter {
@@ -161,10 +233,19 @@ fn main() -> anyhow::Result<()> {
             title: chapter.title,
             pages,
         });
-        print!(".");
-        std::io::stdout().flush().ok();
+        if !quiet && !progress_is_tty {
+            eprintln!(
+                "chapter {}/{total_chapters} done ({page_count}/{total_pages} pages so far)",
+                chapter_index + 1
+            );
+        }
     }
-    println!("\nprocessed {page_count} page(s)");
+    if !quiet {
+        if progress_is_tty {
+            eprintln!();
+        }
+        eprintln!("processed {page_count} page(s)");
+    }
 
     let output_bytes = match cli.format {
         Format::Epub => epub::build_epub(
@@ -189,26 +270,15 @@ fn main() -> anyhow::Result<()> {
         Format::Pdf => pdf::build_pdf(&processed_chapters)?,
     };
 
-    let extension = match cli.format {
-        Format::Epub => "epub",
-        Format::Cbz => "cbz",
-        Format::Pdf => "pdf",
-    };
-    let output_path = match cli.output {
-        Some(path) if path.is_dir() => {
-            path.join(format!("{}.{extension}", sanitize_filename(&title)))
-        }
-        Some(path) => path,
-        None => cli.input.with_extension(extension),
-    };
-
     std::fs::write(&output_path, &output_bytes)
         .with_context(|| format!("writing output to {}", output_path.display()))?;
-    println!(
-        "wrote {} ({} bytes)",
-        output_path.display(),
-        output_bytes.len()
-    );
+    if !quiet {
+        eprintln!(
+            "wrote {} ({} bytes)",
+            output_path.display(),
+            output_bytes.len()
+        );
+    }
 
     Ok(())
 }

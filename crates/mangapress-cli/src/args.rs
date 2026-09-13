@@ -15,12 +15,28 @@ use std::path::PathBuf;
 )]
 pub struct Cli {
     /// Path to a `.cbz` file or a folder of chapter subfolders/images.
-    pub input: PathBuf,
+    /// Required unless --list-profiles is passed.
+    #[arg(required_unless_present = "list_profiles")]
+    pub input: Option<PathBuf>,
 
-    /// Device profile (e.g. KV, KPW5, KoAO, Rmk2, OTHER). See
-    /// `mangapress-core::profile::PROFILES` for the full list.
+    /// Device profile (e.g. KV, KPW5, KoAO, Rmk2, OTHER). Run
+    /// --list-profiles for the full list.
     #[arg(short, long, default_value = "KV")]
     pub profile: String,
+
+    /// Print every supported device profile code, display name, and
+    /// resolution, then exit.
+    #[arg(long)]
+    pub list_profiles: bool,
+
+    /// Show what would be produced (chapters, pages, resolved metadata,
+    /// output path) without processing any pages or writing anything.
+    #[arg(short = 'n', long = "dry-run")]
+    pub dry_run: bool,
+
+    /// Suppress routine progress messages; warnings and errors still print.
+    #[arg(short, long)]
+    pub quiet: bool,
 
     /// Right-to-left reading order and spread-split order.
     #[arg(short = 'm', long = "manga-style")]

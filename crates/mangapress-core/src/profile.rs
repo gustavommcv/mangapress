@@ -85,6 +85,19 @@ impl Profile {
         PROFILES.iter().find(|p| p.code == code)
     }
 
+    /// The closest known profile code to an unrecognized one, for "did you
+    /// mean" suggestions — `None` if nothing is close enough to be a
+    /// plausible typo rather than a genuinely different (wrong) code.
+    pub fn closest_code(code: &str) -> Option<&'static str> {
+        let code_lower = code.to_lowercase();
+        PROFILES
+            .iter()
+            .map(|p| (p.code, levenshtein(&code_lower, &p.code.to_lowercase())))
+            .min_by_key(|&(_, dist)| dist)
+            .filter(|&(_, dist)| dist <= (code.len().max(2) / 2).max(1))
+            .map(|(candidate, _)| candidate)
+    }
+
     /// Resolution to actually target, after applying KCC's `--customwidth`/
     /// `--customheight` overrides (`comic2ebook.py`'s `checkOptions()`):
     /// each dimension is independently replaceable, so `OTHER` + one
@@ -101,6 +114,30 @@ impl Profile {
             height_override.unwrap_or(self.height),
         )
     }
+}
+
+/// Levenshtein edit distance, for [`Profile::closest_code`]'s "did you
+/// mean" suggestions. Standard textbook dynamic-programming formulation —
+/// no need for anything fancier at ~40 short profile codes.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+
+    for (i, &ca) in a.iter().enumerate() {
+        let mut prev_diag = row[0];
+        row[0] = i + 1;
+        for (j, &cb) in b.iter().enumerate() {
+            let temp = row[j + 1];
+            row[j + 1] = if ca == cb {
+                prev_diag
+            } else {
+                1 + prev_diag.min(row[j]).min(row[j + 1])
+            };
+            prev_diag = temp;
+        }
+    }
+    row[b.len()]
 }
 
 macro_rules! profile {
@@ -226,6 +263,17 @@ mod tests {
     #[test]
     fn unknown_code_is_none() {
         assert!(Profile::by_code("NOPE").is_none());
+    }
+
+    #[test]
+    fn closest_code_suggests_a_near_miss() {
+        assert_eq!(Profile::closest_code("Kv"), Some("KV"));
+        assert_eq!(Profile::closest_code("KPW55"), Some("KPW5"));
+    }
+
+    #[test]
+    fn closest_code_gives_up_on_wildly_different_input() {
+        assert_eq!(Profile::closest_code("this-is-not-a-profile-code"), None);
     }
 
     #[test]

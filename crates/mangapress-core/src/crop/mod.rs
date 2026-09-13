@@ -214,42 +214,86 @@ pub fn get_bbox(img: &GrayImage) -> Option<Bbox> {
     }
 }
 
-/// `ignore_pixels_near_edge()` from `page_number_crop_alg.py`: clears each
-/// of the four 2%-wide/tall edge strips of a binary (0/255) image if the
-/// strip's fraction of foreground (255) pixels is low but nonzero — a
-/// low-density scatter near the border reads as scan noise/dust, not real
-/// content, and gets erased before the final bbox is computed. A strip with
-/// *no* foreground pixels is already fine as-is; one with a high fraction is
-/// assumed to be real content and is deliberately left alone.
+/// `ignore_pixels_near_edge()` from `page_number_crop_alg.py`. Confirmed by
+/// reading the real upstream source directly (an earlier version of this
+/// function guessed at the algorithm from its name/effect instead, and got
+/// it wrong): it does *not* judge each outer 2% edge strip by its own
+/// density. For each of the four edges it instead looks at a thin *inner*
+/// band just past the raw edge (offset 2%-2.5% of that dimension) — if that
+/// band is almost entirely empty (foreground density under upstream's
+/// literal 0.1%, not 2%), real content is assumed not to reach that far in,
+/// and then: that thin inner band itself is cleared if it had *any*
+/// foreground at all (density > 0), and — independently, still gated on the
+/// same inner-band density — the raw outer edge strip is wiped *entirely*
+/// as scan noise if it contains *any* foreground pixel (a single stray dark
+/// pixel is enough; this second check is not a density comparison). A page
+/// small enough that the 2% and 2.5% cutoffs for a given dimension round
+/// down to the same integer pixel count can't express these as distinct
+/// bands, so upstream skips the whole function in that case — for both axes,
+/// not just the too-small one.
 pub fn ignore_pixels_near_edge(bw_img: &mut GrayImage) {
     let (w, h) = bw_img.dimensions();
-    let edge_boxes = [
-        (0, 0, w, (0.02 * h as f64) as u32),
-        (0, (0.98 * h as f64) as u32, w, h),
-        (0, 0, (0.02 * w as f64) as u32, h),
-        ((0.98 * w as f64) as u32, 0, w, h),
+    if (0.02 * h as f64) as u32 == (0.025 * h as f64) as u32 {
+        return;
+    }
+    if (0.02 * w as f64) as u32 == (0.025 * w as f64) as u32 {
+        return;
+    }
+
+    let e = |frac: f64, dim: u32| (frac * dim as f64) as u32;
+
+    // (edge_box, inner_box) pairs, each (x0, y0, x1, y1).
+    let regions = [
+        (
+            (0, 0, w, e(0.02, h)),
+            (e(0.02, w), e(0.02, h), e(0.98, w), e(0.025, h)),
+        ), // top
+        (
+            (0, e(0.98, h), w, h),
+            (e(0.02, w), e(0.975, h), e(0.98, w), e(0.98, h)),
+        ), // bottom
+        (
+            (0, 0, e(0.02, w), h),
+            (e(0.02, w), e(0.02, h), e(0.025, w), e(0.98, h)),
+        ), // left
+        (
+            (e(0.98, w), 0, w, h),
+            (e(0.975, w), e(0.02, h), e(0.98, w), e(0.98, h)),
+        ), // right
     ];
 
-    for (x0, y0, x1, y1) in edge_boxes {
-        if x1 <= x0 || y1 <= y0 {
-            continue;
-        }
-        let area = (x1 - x0) as f64 * (y1 - y0) as f64;
-        let mut foreground = 0u32;
+    let has_foreground = |img: &GrayImage, (x0, y0, x1, y1): (u32, u32, u32, u32)| {
+        (y0..y1).any(|y| (x0..x1).any(|x| img.get_pixel(x, y)[0] == 255))
+    };
+    let fill_zero = |img: &mut GrayImage, (x0, y0, x1, y1): (u32, u32, u32, u32)| {
         for y in y0..y1 {
             for x in x0..x1 {
+                img.put_pixel(x, y, Luma([0]));
+            }
+        }
+    };
+
+    for (edge_box, inner_box) in regions {
+        let (ix0, iy0, ix1, iy1) = inner_box;
+        if ix1 <= ix0 || iy1 <= iy0 {
+            continue;
+        }
+        let inner_area = (ix1 - ix0) as f64 * (iy1 - iy0) as f64;
+        let mut inner_foreground = 0u32;
+        for y in iy0..iy1 {
+            for x in ix0..ix1 {
                 if bw_img.get_pixel(x, y)[0] == 255 {
-                    foreground += 1;
+                    inner_foreground += 1;
                 }
             }
         }
-        let imperfections = foreground as f64 / area;
-        if imperfections > 0.0 && imperfections < 0.02 {
-            for y in y0..y1 {
-                for x in x0..x1 {
-                    bw_img.put_pixel(x, y, Luma([0]));
-                }
-            }
+        let imperfections = inner_foreground as f64 / inner_area;
+
+        if imperfections > 0.0 && imperfections < 0.001 {
+            fill_zero(bw_img, inner_box);
+        }
+        if imperfections < 0.001 && has_foreground(bw_img, edge_box) {
+            fill_zero(bw_img, edge_box);
         }
     }
 }
@@ -305,18 +349,36 @@ pub fn binarize_for_crop(
     }
 }
 
+/// `ImageFilter.BoxBlur(1)`. Confirmed empirically against real Pillow
+/// (not assumed) that this is a *separable* two-pass 1D blur (horizontal
+/// then vertical, each averaging 3 clamped-at-the-edge samples and
+/// rounding to the nearest integer), not a single-pass 2D 3x3 convolution.
+/// The two are mathematically equivalent for interior pixels, but diverge
+/// near the image edges — confirmed to matter in practice: this divergence,
+/// compounded through [`threshold_binary`] and [`ignore_pixels_near_edge`],
+/// was shifting real page crop boundaries by as much as ~20px (the width of
+/// the edge-noise strip `ignore_pixels_near_edge` checks) whenever a pixel
+/// near the border landed on the wrong side of the threshold. A window of
+/// exactly 3 samples can never average to a `.5` boundary (that would need
+/// a non-integer sum), so plain `f64::round()` can't disagree with
+/// Pillow's own rounding here regardless of tie-breaking rule.
 fn box_blur_radius1(img: &GrayImage) -> GrayImage {
     let (w, h) = img.dimensions();
+    let horizontal = GrayImage::from_fn(w, h, |x, y| {
+        let x0 = x.saturating_sub(1);
+        let x2 = (x + 1).min(w - 1);
+        let sum = img.get_pixel(x0, y)[0] as u32
+            + img.get_pixel(x, y)[0] as u32
+            + img.get_pixel(x2, y)[0] as u32;
+        Luma([(sum as f64 / 3.0).round() as u8])
+    });
     GrayImage::from_fn(w, h, |x, y| {
-        let mut sum: u32 = 0;
-        for dy in -1i32..=1 {
-            for dx in -1i32..=1 {
-                let sx = (x as i32 + dx).clamp(0, w as i32 - 1) as u32;
-                let sy = (y as i32 + dy).clamp(0, h as i32 - 1) as u32;
-                sum += img.get_pixel(sx, sy)[0] as u32;
-            }
-        }
-        Luma([(sum / 9) as u8])
+        let y0 = y.saturating_sub(1);
+        let y2 = (y + 1).min(h - 1);
+        let sum = horizontal.get_pixel(x, y0)[0] as u32
+            + horizontal.get_pixel(x, y)[0] as u32
+            + horizontal.get_pixel(x, y2)[0] as u32;
+        Luma([(sum as f64 / 3.0).round() as u8])
     })
 }
 
@@ -379,28 +441,38 @@ mod tests {
         );
     }
 
+    // 1000x1000 so 2%/2.5% of each dimension round to different pixel
+    // counts (20 vs 25) — on a too-small canvas upstream's own degenerate
+    // guard skips the whole function, which would make these tests
+    // vacuously pass no matter what they assert.
+    const EDGE_TEST_DIM: u32 = 1000;
+
     #[test]
     fn ignore_pixels_near_edge_clears_sparse_border_noise() {
-        let mut img = GrayImage::from_pixel(100, 100, Luma([0]));
-        // A single stray foreground pixel in the top 2% strip (density well
-        // under 2%) — should be treated as scan noise and cleared.
-        img.put_pixel(50, 0, Luma([255]));
+        let mut img = GrayImage::from_pixel(EDGE_TEST_DIM, EDGE_TEST_DIM, Luma([0]));
+        // A single stray foreground pixel right at the raw top edge, with
+        // nothing in the inner 2%-2.5% band just past it (density 0 there).
+        // Upstream reads the empty inner band as "content doesn't reach
+        // this far in", then wipes the whole outer edge strip because it
+        // has *any* foreground pixel at all.
+        img.put_pixel(500, 0, Luma([255]));
         ignore_pixels_near_edge(&mut img);
-        assert_eq!(img.get_pixel(50, 0)[0], 0);
+        assert_eq!(img.get_pixel(500, 0)[0], 0);
     }
 
     #[test]
     fn ignore_pixels_near_edge_keeps_dense_border_content() {
-        let mut img = GrayImage::from_pixel(100, 100, Luma([0]));
-        // Fill the whole top strip (2 rows) — density 100%, well over the
-        // 2% noise threshold, so this is assumed to be real content.
-        for y in 0..2 {
-            for x in 0..100 {
+        let mut img = GrayImage::from_pixel(EDGE_TEST_DIM, EDGE_TEST_DIM, Luma([0]));
+        // Fill the top edge strip *and* the inner 2%-2.5% band just past it
+        // — real content reaching that far in, not scan noise, so upstream
+        // must leave both untouched.
+        for y in 0..30 {
+            for x in 0..EDGE_TEST_DIM {
                 img.put_pixel(x, y, Luma([255]));
             }
         }
         ignore_pixels_near_edge(&mut img);
-        assert_eq!(img.get_pixel(50, 0)[0], 255);
+        assert_eq!(img.get_pixel(500, 0)[0], 255);
     }
 
     #[test]

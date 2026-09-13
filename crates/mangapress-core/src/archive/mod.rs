@@ -6,6 +6,7 @@
 //! gives us a pure-Rust path for the one format that actually matters here.
 
 pub mod cbz;
+pub mod folder;
 
 /// One extracted source page, in tree order, with its path relative to the
 /// archive/folder root — the relative path is what chapter attribution

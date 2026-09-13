@@ -67,6 +67,10 @@ pub struct Cli {
     #[arg(short, long)]
     pub author: Option<String>,
 
+    /// EPUB language code.
+    #[arg(long, default_value = "en-US")]
+    pub language: String,
+
     /// Replace the screen width provided by the device profile. Can be used
     /// with `--profile OTHER` for a fully custom resolution, or alongside a
     /// named profile to override just one dimension.

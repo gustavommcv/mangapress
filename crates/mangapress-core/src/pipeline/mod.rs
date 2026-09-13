@@ -5,6 +5,11 @@
 pub mod page;
 pub mod spread;
 
+use crate::crop::{self, Background, CropPolicy};
+use crate::error::Result;
+use crate::resize::{self, ResizeOptions};
+use image::ImageFormat;
+
 /// Options that drive a single conversion run. Mirrors the relevant subset
 /// of `kcc-c2e.py`'s argument groups (MAIN/PROCESSING) — see
 /// `mangapress-cli`'s `args.rs` for the full CLI surface and which of these
@@ -25,6 +30,9 @@ pub struct PipelineOptions {
     pub splitter: SplitterMode,
     pub upscale: bool,
     pub stretch: bool,
+    pub wallpaper: bool,
+    pub white_borders: bool,
+    pub output_format: OutputFormat,
     pub gamma: Option<f32>,
 }
 
@@ -51,13 +59,81 @@ pub enum SplitterMode {
     Both,
 }
 
-/// Processes a single source page into one or more output pages (a spread
-/// may become two split halves and/or a rotated whole — see [`spread`]),
-/// running the full per-page pipeline on each: crop -> gamma -> grayscale ->
-/// autocontrast -> resize -> rainbow removal -> quantize -> encode.
+/// Mirrors `mangapress-cli`'s `Format` enum — duplicated rather than
+/// depended-on, since `mangapress-core` cannot depend on the binary crate.
+/// Only affects processing decisions here (e.g. resize's pad-vs-contain
+/// choice); actual ebook assembly is a separate, later step the CLI drives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Epub,
+    Cbz,
+    Pdf,
+}
+
+/// Processes a single source page: decode -> grayscale -> crop -> resize ->
+/// encode. Returns one output page per element — always exactly one today,
+/// since double-page-spread splitting/rotation
+/// ([`spread::decide`] exists and is tested, but isn't wired to actual
+/// image transformation yet) isn't executed here.
+///
+/// Also not yet applied, tracked as gaps rather than silently skipped:
+/// gamma correction, autocontrast, inter-panel crop, rainbow-artifact
+/// removal, and palette quantization — each exists only as a `todo!()` in
+/// its own module still. What *is* applied (crop, resize) has its own
+/// fixture-backed tests in [`crate::crop`] and [`crate::resize`]; this
+/// function's job is only to wire already-validated pieces together in the
+/// right order, not to introduce new heuristics of its own.
 pub fn process_page(
-    _source_bytes: &[u8],
-    _options: &PipelineOptions,
-) -> crate::error::Result<Vec<Vec<u8>>> {
-    todo!("wire crop/contrast/resize/rainbow/quantize together per page — implement after each stage has its own fixture-backed tests")
+    source_bytes: &[u8],
+    options: &PipelineOptions,
+) -> Result<Vec<(String, Vec<u8>)>> {
+    let page = image::load_from_memory(source_bytes)?.to_luma8();
+
+    let page = match options.cropping {
+        CroppingMode::Disabled => page,
+        CroppingMode::Margins => {
+            let policy = crop_policy(options);
+            match crop::margin::compute_margin_crop(&page, &policy) {
+                Some(crop_box) => crop::apply_crop(&page, crop_box),
+                None => page,
+            }
+        }
+        CroppingMode::MarginsAndPageNumbers => {
+            let policy = crop_policy(options);
+            match crop::page_number::compute_margin_crop_ignoring_page_number(&page, &policy) {
+                Some(crop_box) => crop::apply_crop(&page, crop_box),
+                None => page,
+            }
+        }
+    };
+
+    let resize_options = ResizeOptions {
+        target: options.target_resolution(),
+        upscale: options.upscale,
+        stretch: options.stretch,
+        wallpaper: options.wallpaper,
+        is_kdx_profile: options.profile.code == "KDX",
+        pads_for_cbz_or_pdf: matches!(options.output_format, OutputFormat::Cbz | OutputFormat::Pdf),
+        white_borders: options.white_borders,
+        // fillCheck() (page background detection) isn't ported yet -- white
+        // is the overwhelmingly common case for manga pages in the
+        // meantime (see crate::crop::Background's doc comment).
+        fill: 255,
+    };
+    let page = resize::resize_page(&page, &resize_options);
+
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageLuma8(page)
+        .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Jpeg)?;
+    Ok(vec![("jpg".to_string(), bytes)])
+}
+
+fn crop_policy(options: &PipelineOptions) -> CropPolicy {
+    CropPolicy {
+        power: options.cropping_power,
+        minimum_area_ratio: options.cropping_minimum as f64,
+        preserve_margin_percent: 0.0,
+        // fillCheck() isn't ported yet -- see process_page's fill comment.
+        background: Background::White,
+    }
 }

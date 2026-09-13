@@ -51,6 +51,11 @@ pub struct Cli {
     #[arg(long)]
     pub whiteborders: bool,
 
+    /// Quantize to the device profile's grayscale palette (dithered) and
+    /// save PNG instead of full-tone JPEG.
+    #[arg(long)]
+    pub forcepng: bool,
+
     /// Output format.
     #[arg(short, long, value_enum, default_value_t = Format::Epub)]
     pub format: Format,

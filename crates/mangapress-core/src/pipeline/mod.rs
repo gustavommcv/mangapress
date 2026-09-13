@@ -33,6 +33,14 @@ pub struct PipelineOptions {
     pub wallpaper: bool,
     pub white_borders: bool,
     pub output_format: OutputFormat,
+    /// `--forcepng`: quantize to the profile's grayscale palette (Floyd-
+    /// Steinberg dithered) and save PNG instead of full-tone JPEG. Mirrors
+    /// upstream's PNG branch of `save_with_codec()`, simplified since this
+    /// pipeline is grayscale-only already (upstream's extra `not
+    /// self.colorOutput` condition is therefore always true here) and
+    /// MOBI/AZW3 output (upstream's GIF branch) is out of scope — see
+    /// [`crate::quantize`]'s module docs for the full picture.
+    pub force_png: bool,
     pub gamma: Option<f32>,
 }
 
@@ -71,16 +79,16 @@ pub enum OutputFormat {
 }
 
 /// Processes a single source page: decode -> grayscale -> crop -> resize ->
-/// encode. Returns one output page per element — always exactly one today,
-/// since double-page-spread splitting/rotation
-/// ([`spread::decide`] exists and is tested, but isn't wired to actual
-/// image transformation yet) isn't executed here.
+/// quantize (if `--forcepng`) -> encode. Returns one output page per
+/// element — always exactly one today, since double-page-spread
+/// splitting/rotation ([`spread::decide`] exists and is tested, but isn't
+/// wired to actual image transformation yet) isn't executed here.
 ///
 /// Also not yet applied, tracked as gaps rather than silently skipped:
-/// gamma correction, autocontrast, inter-panel crop, rainbow-artifact
-/// removal, and palette quantization — each exists only as a `todo!()` in
-/// its own module still. What *is* applied (crop, resize) has its own
-/// fixture-backed tests in [`crate::crop`] and [`crate::resize`]; this
+/// gamma correction, autocontrast, inter-panel crop, and rainbow-artifact
+/// removal — each exists only as a `todo!()` in its own module still. What
+/// *is* applied (crop, resize, quantize) has its own fixture-backed tests
+/// in [`crate::crop`], [`crate::resize`], and [`crate::quantize`]; this
 /// function's job is only to wire already-validated pieces together in the
 /// right order, not to introduce new heuristics of its own.
 pub fn process_page(
@@ -123,9 +131,18 @@ pub fn process_page(
     let page = resize::resize_page(&page, &resize_options);
 
     let mut bytes = Vec::new();
-    image::DynamicImage::ImageLuma8(page)
-        .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Jpeg)?;
-    Ok(vec![("jpg".to_string(), bytes)])
+    let extension = if options.force_png {
+        let quantized =
+            crate::quantize::quantize_with_floyd_steinberg(&page, options.profile.palette);
+        image::DynamicImage::ImageLuma8(quantized)
+            .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Png)?;
+        "png"
+    } else {
+        image::DynamicImage::ImageLuma8(page)
+            .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Jpeg)?;
+        "jpg"
+    };
+    Ok(vec![(extension.to_string(), bytes)])
 }
 
 fn crop_policy(options: &PipelineOptions) -> CropPolicy {

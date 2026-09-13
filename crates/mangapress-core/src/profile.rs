@@ -21,10 +21,25 @@ pub enum Palette {
 impl Palette {
     /// Number of distinct gray levels in the palette.
     pub fn levels(self) -> u8 {
+        self.level_values().len() as u8
+    }
+
+    /// The exact gray values in this palette, transcribed byte-for-byte
+    /// from `ProfileData.Palette4/15/16` in `image.py`. Not naive even
+    /// spacing: `Gray15` in particular is `Gray16` with `0xee` (238)
+    /// removed — the gap between `0xdd` (221) and `0xff` (255) is real,
+    /// not a transcription error.
+    pub fn level_values(self) -> &'static [u8] {
         match self {
-            Palette::Gray4 => 4,
-            Palette::Gray15 => 15,
-            Palette::Gray16 => 16,
+            Palette::Gray4 => &[0x00, 0x55, 0xaa, 0xff],
+            Palette::Gray15 => &[
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xff,
+            ],
+            Palette::Gray16 => &[
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xee, 0xff,
+            ],
         }
     }
 }
@@ -220,6 +235,15 @@ mod tests {
         assert_eq!(p.effective_resolution(Some(1200), None), (1200, 1448));
         assert_eq!(p.effective_resolution(None, Some(1600)), (1072, 1600));
         assert_eq!(p.effective_resolution(Some(1200), Some(1600)), (1200, 1600));
+    }
+
+    #[test]
+    fn gray15_has_a_real_gap_not_naive_even_spacing() {
+        let values = Palette::Gray15.level_values();
+        assert_eq!(values.len(), 15);
+        assert!(values.contains(&0xdd));
+        assert!(!values.contains(&0xee));
+        assert!(values.contains(&0xff));
     }
 
     #[test]

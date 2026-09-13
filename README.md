@@ -53,19 +53,13 @@ project targets), not for webtoons or color manga read on color-capable hardware
 adding it would actually involve. `--eraserainbow` (below) does not change this — it fixes a
 display artifact, it doesn't produce color output.
 
-**Not yet in scope:** dark-background page detection (KCC's `fillCheck()`). Every page is assumed
-to have a white background; a page with a genuinely dark background — a stylized chapter-title
-illustration, for instance — isn't corrupted, but is cropped less tightly than KCC would crop it,
-since the crop algorithm ends up reading most of the dark page as foreground content. Regular
-white-background manga pages (the common case) aren't affected — cropping on those has been
-validated pixel-for-pixel against real KCC output.
-
 ## Status
 
 Functional: device profiles for ~40 Kindle/Kobo/reMarkable/generic targets, the full image
-pipeline (margin and page-number-aware cropping, inter-panel cropping, resize, gamma/autocontrast,
-double-page-spread split/rotate, rainbow-artifact removal), `ComicInfo.xml` metadata resolution,
-and EPUB/CBZ/PDF output all work end to end and are covered by an extensive test suite — see
+pipeline (per-page background detection, margin and page-number-aware cropping, inter-panel
+cropping, resize, gamma/autocontrast, double-page-spread split/rotate, rainbow-artifact removal),
+`ComicInfo.xml` metadata resolution, and EPUB/CBZ/PDF output all work end to end and are covered by
+an extensive test suite — see
 [docs/adr](docs/adr/README.md) for the design decisions made so far, and open an issue if you hit
 a rough edge. Everything is grayscale output today regardless of profile (see "Not yet in scope"
 above) — still pre-1.0.

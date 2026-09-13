@@ -6,6 +6,7 @@ pub mod spread;
 
 use crate::crop::{self, Background, CropPolicy};
 use crate::error::Result;
+use crate::fill_check::fill_check;
 use crate::resize::{self, ResizeOptions};
 use image::codecs::jpeg::JpegEncoder;
 use image::{ExtendedColorType, ImageEncoder, ImageFormat};
@@ -131,12 +132,18 @@ pub fn process_page(
     let page = image::load_from_memory(source_bytes)?.to_luma8();
     let target = options.target_resolution();
 
+    // Detected once per *source* page, before any spread-splitting, and
+    // reused for every resulting piece -- matching upstream, which computes
+    // `fillCheck()` once in `ComicPageParser.__init__` and carries that same
+    // value through every payload entry `splitCheck()` produces.
+    let background = fill_check(&page);
+
     let decision = spread::decide(page.dimensions(), target, options.splitter);
     let variants = spread::execute(&page, decision, options.manga_style, options.rotate_right);
 
     let mut outputs = Vec::with_capacity(variants.len());
     for variant in variants {
-        outputs.push(finish_page(variant, target, options)?);
+        outputs.push(finish_page(variant, target, options, background)?);
     }
     Ok(outputs)
 }
@@ -145,18 +152,19 @@ fn finish_page(
     page: image::GrayImage,
     target: (u32, u32),
     options: &PipelineOptions,
+    background: Background,
 ) -> Result<(String, Vec<u8>)> {
     let page = match options.cropping {
         CroppingMode::Disabled => page,
         CroppingMode::Margins => {
-            let policy = crop_policy(options);
+            let policy = crop_policy(options, background);
             match crop::margin::compute_margin_crop(&page, &policy) {
                 Some(crop_box) => crop::apply_crop(&page, crop_box),
                 None => page,
             }
         }
         CroppingMode::MarginsAndPageNumbers => {
-            let policy = crop_policy(options);
+            let policy = crop_policy(options, background);
             match crop::page_number::compute_margin_crop_ignoring_page_number(&page, &policy) {
                 Some(crop_box) => crop::apply_crop(&page, crop_box),
                 None => page,
@@ -167,7 +175,7 @@ fn finish_page(
     let page = crop::inter_panel::crop_empty_inter_panel_sections(
         page,
         options.inter_panel_crop,
-        Background::White,
+        background,
     );
 
     let effective_gamma = options
@@ -190,10 +198,10 @@ fn finish_page(
         is_kdx_profile: options.profile.code == "KDX",
         pads_for_cbz_or_pdf: matches!(options.output_format, OutputFormat::Cbz | OutputFormat::Pdf),
         white_borders: options.white_borders,
-        // fillCheck() (page background detection) isn't ported yet -- white
-        // is the overwhelmingly common case for manga pages in the
-        // meantime (see crate::crop::Background's doc comment).
-        fill: 255,
+        fill: match background {
+            Background::White => 255,
+            Background::Dark => 0,
+        },
     };
     let page = resize::resize_page(&page, &resize_options);
 
@@ -229,13 +237,12 @@ fn finish_page(
     Ok((extension.to_string(), bytes))
 }
 
-fn crop_policy(options: &PipelineOptions) -> CropPolicy {
+fn crop_policy(options: &PipelineOptions, background: Background) -> CropPolicy {
     CropPolicy {
         power: options.cropping_power,
         minimum_area_ratio: (options.cropping_minimum as f64) / 100.0,
         preserve_margin_percent: options.preserve_margin_percent,
-        // fillCheck() isn't ported yet -- see process_page's fill comment.
-        background: Background::White,
+        background,
     }
 }
 

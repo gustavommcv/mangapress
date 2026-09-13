@@ -52,8 +52,9 @@ pub struct ResizeOptions {
     /// `--whiteborders`: suppresses the CBZ/PDF padding path in favor of
     /// plain `contain`, even when the format would otherwise pad.
     pub white_borders: bool,
-    /// The page's detected background color (`fillCheck()` upstream, not
-    /// yet ported — see [`crate::crop::Background`]), used as the pad fill.
+    /// The page's detected background color (`fillCheck()` upstream, see
+    /// [`crate::fill_check`]), used as the pad fill: 255 for white, 0 for
+    /// dark.
     pub fill: u8,
 }
 

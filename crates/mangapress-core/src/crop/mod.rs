@@ -53,8 +53,9 @@ pub fn threshold_from_power(power: f32) -> f32 {
 }
 
 /// The page's detected background color (upstream: `fillCheck()` in
-/// `image.py`, not yet ported — background color detection is out of scope
-/// for the crop algorithms themselves, which just take it as an input).
+/// `image.py`; detection itself lives in [`crate::fill_check`], out of scope
+/// for the crop algorithms themselves, which just take the result as an
+/// input).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Background {
     White,

@@ -11,6 +11,7 @@ pub mod contrast;
 pub mod crop;
 pub mod ebook;
 pub mod error;
+pub mod fill_check;
 pub mod manga;
 pub mod metadata;
 pub mod natural_sort;

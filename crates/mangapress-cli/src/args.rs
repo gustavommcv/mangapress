@@ -101,6 +101,14 @@ pub struct Cli {
     #[arg(short, long)]
     pub author: Option<String>,
 
+    /// How to use ComicInfo.xml's own Title field, if the source has one.
+    #[arg(long, value_enum, default_value_t = MetadataTitle::SeriesOnly)]
+    pub metadatatitle: MetadataTitle,
+
+    /// Keep the source's ComicInfo.xml in CBZ output.
+    #[arg(long)]
+    pub keepcomicinfo: bool,
+
     /// EPUB language code.
     #[arg(long, default_value = "en-US")]
     pub language: String,
@@ -142,4 +150,14 @@ pub enum InterPanelCrop {
     Disabled,
     Horizontal,
     Both,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetadataTitle {
+    /// Use ComicInfo.xml's Series/Volume/Number only.
+    SeriesOnly,
+    /// Append ": Title" after Series/Volume/Number.
+    Combine,
+    /// Use ComicInfo.xml's Title alone, overriding even an explicit -t.
+    TitleOnly,
 }

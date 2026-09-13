@@ -24,6 +24,9 @@ pub enum Error {
 
     #[error("PDF error: {0}")]
     Pdf(String),
+
+    #[error("ComicInfo.xml parse error: {0}")]
+    ComicInfo(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

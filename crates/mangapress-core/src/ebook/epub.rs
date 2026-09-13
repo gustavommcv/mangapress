@@ -14,10 +14,13 @@
 //! doesn't need: the title only ever needs to be human-readable text in the
 //! TOC, never a filesystem-safe path segment.
 //!
-//! Not yet implemented, tracked as gaps rather than guessed at: per-page
+//! Not yet implemented, tracked as a gap rather than guessed at: per-page
 //! `page-spread-*` OPF properties (needs [`crate::pipeline::spread`] output
-//! tagging that doesn't exist yet) and `ComicInfo.xml`-driven chapter
-//! overrides (needs [`crate::metadata`], also not implemented yet).
+//! tagging that doesn't exist yet). `ComicInfo.xml`-driven chapter overrides
+//! are a deliberate, documented scope cut — see [`crate::metadata`]'s module
+//! docs — not a gap; title/author/summary resolution from `ComicInfo.xml`
+//! *is* wired in via [`EpubOptions::description`] and the CLI's own
+//! `metadata::resolve()` call before constructing these options.
 
 use super::Chapter;
 use crate::error::{Error, Result};
@@ -27,9 +30,15 @@ use std::hash::{Hash, Hasher};
 
 pub struct EpubOptions {
     pub title: String,
+    /// Joined into a single `<dc:creator>` element -- EPUB allows one per
+    /// author instead, but a single joined field keeps this struct (and
+    /// its existing tests) simple; multiple authors are rare enough for
+    /// scanlated manga that this isn't worth the extra plumbing yet.
     pub author: String,
     pub language: String,
     pub reading_direction: ReadingDirection,
+    /// `ComicInfo.xml`'s `Summary`, if any (see [`crate::metadata`]).
+    pub description: Option<String>,
 }
 
 pub fn build_epub(chapters: &[Chapter], options: &EpubOptions) -> Result<Vec<u8>> {
@@ -137,7 +146,7 @@ fn build_opf(
 <dc:title>{title}</dc:title>
 <dc:creator>{author}</dc:creator>
 <dc:language>{lang}</dc:language>
-<meta property="rendition:layout">pre-paginated</meta>
+{description}<meta property="rendition:layout">pre-paginated</meta>
 </metadata>
 <manifest>
 <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
@@ -152,6 +161,11 @@ fn build_opf(
         identifier = xml_escape(identifier),
         title = xml_escape(&options.title),
         author = xml_escape(&options.author),
+        description = options
+            .description
+            .as_deref()
+            .map(|d| format!("<dc:description>{}</dc:description>\n", xml_escape(d)))
+            .unwrap_or_default(),
         items = manifest_items.join("\n"),
         direction = options.reading_direction.epub_page_progression(),
         spine = spine_itemrefs.join("\n"),
@@ -339,6 +353,7 @@ mod tests {
             reading_direction: ReadingDirection {
                 right_to_left: true,
             },
+            description: None,
         }
     }
 
@@ -399,6 +414,25 @@ mod tests {
         assert_eq!(opf.matches("image/png").count(), 3);
         assert!(opf.contains(r#"page-progression-direction="rtl""#));
         assert!(opf.contains("pre-paginated"));
+    }
+
+    #[test]
+    fn description_is_included_when_present_and_omitted_when_absent() {
+        let mut with_description = default_options();
+        with_description.description = Some("A summary & more".to_string());
+        let bytes = build_epub(&sample_chapters(), &with_description).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut opf = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("OEBPS/content.opf").unwrap(), &mut opf)
+            .unwrap();
+        assert!(opf.contains("<dc:description>A summary &amp; more</dc:description>"));
+
+        let bytes = build_epub(&sample_chapters(), &default_options()).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut opf = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("OEBPS/content.opf").unwrap(), &mut opf)
+            .unwrap();
+        assert!(!opf.contains("dc:description"));
     }
 
     #[test]

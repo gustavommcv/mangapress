@@ -1,11 +1,12 @@
 mod args;
 
 use anyhow::{bail, Context};
-use args::{Cli, Cropping, Format, InterPanelCrop, Splitter};
+use args::{Cli, Cropping, Format, InterPanelCrop, MetadataTitle, Splitter};
 use clap::Parser;
 use mangapress_core::archive::{cbz::extract_cbz, folder::read_folder, SourceEntry};
 use mangapress_core::ebook::{cbz_out, epub, group_into_chapters, pdf, Chapter, Page};
 use mangapress_core::manga::ReadingDirection;
+use mangapress_core::metadata::{self, MetadataTitleMode};
 use mangapress_core::pipeline::{
     process_page, CroppingMode, OutputFormat, PipelineOptions, SplitterMode,
 };
@@ -31,13 +32,11 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
-    let title = cli.title.clone().unwrap_or_else(|| {
-        cli.input
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Untitled".to_string())
-    });
-    let author = cli.author.clone().unwrap_or_else(|| "Unknown".to_string());
+    let fallback_title = cli
+        .input
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Untitled".to_string());
 
     println!(
         "mangapress: converting '{}' for {} ({width}x{height}, {} gray levels), manga_style={}, format={:?}",
@@ -48,7 +47,7 @@ fn main() -> anyhow::Result<()> {
         cli.format,
     );
 
-    let source_entries: Vec<SourceEntry> = if cli.input.is_dir() {
+    let mut source_entries: Vec<SourceEntry> = if cli.input.is_dir() {
         read_folder(&cli.input)
     } else {
         extract_cbz(&cli.input)
@@ -58,6 +57,31 @@ fn main() -> anyhow::Result<()> {
     if source_entries.is_empty() {
         bail!("no files found in {}", cli.input.display());
     }
+
+    let comic_info_xml = metadata::extract_comic_info_entry(&mut source_entries);
+    let comic_info = comic_info_xml
+        .as_deref()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .map(|xml| metadata::parse_comic_info_xml(&xml))
+        .transpose()
+        .with_context(|| format!("parsing ComicInfo.xml from {}", cli.input.display()))?;
+    if comic_info.is_some() {
+        println!("found ComicInfo.xml");
+    }
+
+    let resolved = metadata::resolve(
+        comic_info.as_ref(),
+        cli.title.as_deref(),
+        cli.author.as_deref(),
+        &fallback_title,
+        match cli.metadatatitle {
+            MetadataTitle::SeriesOnly => MetadataTitleMode::SeriesOnly,
+            MetadataTitle::Combine => MetadataTitleMode::Combine,
+            MetadataTitle::TitleOnly => MetadataTitleMode::TitleOnly,
+        },
+    );
+    let title = resolved.title;
+    let author = resolved.authors.join(", ");
 
     let source_chapters = group_into_chapters(source_entries);
     let total_pages: usize = source_chapters.iter().map(|c| c.pages.len()).sum();
@@ -141,9 +165,16 @@ fn main() -> anyhow::Result<()> {
                 reading_direction: ReadingDirection {
                     right_to_left: cli.manga_style,
                 },
+                description: resolved.summary,
             },
         )?,
-        Format::Cbz => cbz_out::build_cbz(&processed_chapters)?,
+        Format::Cbz => {
+            let keep_xml = cli
+                .keepcomicinfo
+                .then_some(comic_info_xml.as_deref())
+                .flatten();
+            cbz_out::build_cbz(&processed_chapters, keep_xml)?
+        }
         Format::Pdf => pdf::build_pdf(&processed_chapters)?,
     };
 

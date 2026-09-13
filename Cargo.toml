@@ -19,6 +19,7 @@ thiserror = "2"
 anyhow = "1"
 slug = "0.1"
 printpdf = { version = "0.12", default-features = false, features = ["images"] }
+roxmltree = "0.21"
 
 [profile.release]
 lto = true

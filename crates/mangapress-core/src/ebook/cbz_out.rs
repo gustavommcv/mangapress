@@ -10,8 +10,16 @@
 use super::Chapter;
 use crate::error::{Error, Result};
 
-pub fn build_cbz(chapters: &[Chapter]) -> Result<Vec<u8>> {
+/// `--keepcomicinfo`: re-embeds the *original* `ComicInfo.xml` bytes
+/// (unmodified — upstream doesn't rewrite it to reflect the resize either)
+/// at the root of the output CBZ. `None` when the source had no
+/// `ComicInfo.xml` or `--keepcomicinfo` wasn't requested.
+pub fn build_cbz(chapters: &[Chapter], comic_info_xml: Option<&[u8]>) -> Result<Vec<u8>> {
     let mut entries = Vec::new();
+
+    if let Some(xml) = comic_info_xml {
+        entries.push(("ComicInfo.xml".to_string(), xml.to_vec()));
+    }
 
     for chapter in chapters {
         let safe_title = chapter.title.replace(['/', '\\'], "-");
@@ -21,7 +29,7 @@ pub fn build_cbz(chapters: &[Chapter]) -> Result<Vec<u8>> {
         }
     }
 
-    if entries.is_empty() {
+    if entries.is_empty() || (entries.len() == 1 && comic_info_xml.is_some()) {
         return Err(Error::EmptyBook);
     }
 
@@ -49,13 +57,22 @@ mod tests {
 
     #[test]
     fn empty_chapters_are_rejected() {
-        assert!(matches!(build_cbz(&[]), Err(Error::EmptyBook)));
+        assert!(matches!(build_cbz(&[], None), Err(Error::EmptyBook)));
+    }
+
+    #[test]
+    fn empty_chapters_with_comicinfo_are_still_rejected() {
+        // A lone ComicInfo.xml with no actual pages isn't a book.
+        assert!(matches!(
+            build_cbz(&[], Some(b"<ComicInfo/>")),
+            Err(Error::EmptyBook)
+        ));
     }
 
     #[test]
     fn builds_one_folder_per_chapter() {
         let chapters = vec![chapter("c001 - One", 2), chapter("c002 - Two", 1)];
-        let bytes = build_cbz(&chapters).unwrap();
+        let bytes = build_cbz(&chapters, None).unwrap();
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         let names: Vec<String> = (0..archive.len())
             .map(|i| archive.by_index(i).unwrap().name().to_string())
@@ -73,8 +90,27 @@ mod tests {
     #[test]
     fn slashes_in_titles_are_sanitized() {
         let chapters = vec![chapter("c001 - A/B", 1)];
-        let bytes = build_cbz(&chapters).unwrap();
+        let bytes = build_cbz(&chapters, None).unwrap();
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         assert_eq!(archive.by_index(0).unwrap().name(), "c001 - A-B/p0001.jpg");
+    }
+
+    #[test]
+    fn keepcomicinfo_embeds_the_original_bytes_at_the_root() {
+        let chapters = vec![chapter("c001 - One", 1)];
+        let bytes = build_cbz(
+            &chapters,
+            Some(b"<ComicInfo><Series>Test</Series></ComicInfo>"),
+        )
+        .unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        assert_eq!(archive.by_index(0).unwrap().name(), "ComicInfo.xml");
+        let mut contents = String::new();
+        std::io::Read::read_to_string(
+            &mut archive.by_name("ComicInfo.xml").unwrap(),
+            &mut contents,
+        )
+        .unwrap();
+        assert_eq!(contents, "<ComicInfo><Series>Test</Series></ComicInfo>");
     }
 }

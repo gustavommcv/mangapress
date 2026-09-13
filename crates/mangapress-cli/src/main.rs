@@ -48,6 +48,23 @@ fn same_file(input: &Path, candidate_output: &Path) -> bool {
     }
 }
 
+/// Does `path` already look like a path to one of the ebook formats this
+/// tool writes? Used to decide, for an `--output` path that doesn't exist
+/// yet, whether it names an output *file* to create (so it's a literal
+/// path) or an output *directory* to create (so a filename still needs to
+/// be derived from the title) -- an `--output` naming a not-yet-created
+/// directory would otherwise silently produce an extension-less file
+/// literally named after that directory.
+fn has_known_output_extension(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("epub") | Some("cbz") | Some("pdf")
+    )
+}
+
 /// A sibling path that doesn't collide with `path`, for when `path` would
 /// otherwise overwrite the very input it was derived from. Mirrors KCC's
 /// own `getOutputFilename()`, which appends a `_kccN` suffix for the same
@@ -216,6 +233,17 @@ fn main() -> anyhow::Result<()> {
         Some(path) if path.is_dir() => {
             path.join(format!("{}.{extension}", sanitize_filename(&title)))
         }
+        Some(path) if !path.exists() && !has_known_output_extension(path) => {
+            // `--dry-run` promises nothing gets written -- creating the
+            // directory here would itself be a side effect, so only the
+            // hypothetical path is computed; the real create happens below,
+            // once dry-run has already returned.
+            if !cli.dry_run {
+                std::fs::create_dir_all(path)
+                    .with_context(|| format!("creating output directory {}", path.display()))?;
+            }
+            path.join(format!("{}.{extension}", sanitize_filename(&title)))
+        }
         Some(path) => path.clone(),
         None => input.with_extension(extension),
     };
@@ -320,7 +348,7 @@ fn main() -> anyhow::Result<()> {
         });
         if !quiet && !progress_is_tty {
             eprintln!(
-                "chapter {}/{total_chapters} done ({page_count}/{total_pages} pages so far)",
+                "chapter {}/{total_chapters} done ({source_page_count}/{total_pages} pages so far)",
                 chapter_index + 1
             );
         }

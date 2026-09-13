@@ -87,6 +87,11 @@ pub struct Cli {
     #[arg(long)]
     pub forcepng: bool,
 
+    /// JPEG quality (1-100). Defaults to KCC's own per-profile default: 90
+    /// for Kindle Scribe/Colorsoft profiles (KS*/KCS), 85 otherwise.
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=100))]
+    pub jpeg_quality: Option<u8>,
+
     /// Rotate double-page spreads clockwise instead of the default
     /// counter-clockwise.
     #[arg(long)]

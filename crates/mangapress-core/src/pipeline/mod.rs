@@ -7,7 +7,8 @@ pub mod spread;
 use crate::crop::{self, Background, CropPolicy};
 use crate::error::Result;
 use crate::resize::{self, ResizeOptions};
-use image::ImageFormat;
+use image::codecs::jpeg::JpegEncoder;
+use image::{ExtendedColorType, ImageEncoder, ImageFormat};
 
 /// Options that drive a single conversion run. Mirrors the relevant subset
 /// of `kcc-c2e.py`'s argument groups (MAIN/PROCESSING) — see
@@ -59,6 +60,20 @@ pub struct PipelineOptions {
     /// `--eraserainbow`: run [`crate::rainbow::erase_rainbow_artifacts_gray`]
     /// after resize.
     pub erase_rainbow: bool,
+    /// `--jpeg-quality`, 1-100. `None` means "use [`default_jpeg_quality`]
+    /// for this profile", matching KCC's own `checkOptions()` default.
+    pub jpeg_quality: Option<u8>,
+}
+
+/// KCC's own default JPEG quality (`checkOptions()`, confirmed by reading
+/// the source): Kindle Scribe and Colorsoft profiles get 90, everything
+/// else gets 85. Only applies when `--jpeg-quality` isn't passed.
+pub fn default_jpeg_quality(profile: &crate::profile::Profile) -> u8 {
+    if profile.code.starts_with("KS") || profile.code == "KCS" {
+        90
+    } else {
+        85
+    }
 }
 
 impl PipelineOptions {
@@ -196,8 +211,19 @@ fn finish_page(
             .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Png)?;
         "png"
     } else {
-        image::DynamicImage::ImageLuma8(page)
-            .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Jpeg)?;
+        // Not `DynamicImage::write_to(..., ImageFormat::Jpeg)`: that always
+        // encodes at the `image` crate's own default quality of 75,
+        // regardless of device profile -- noticeably more compressed than
+        // KCC's own 85/90 default for every page this pipeline produces.
+        let quality = options
+            .jpeg_quality
+            .unwrap_or_else(|| default_jpeg_quality(options.profile));
+        JpegEncoder::new_with_quality(&mut std::io::Cursor::new(&mut bytes), quality).write_image(
+            page.as_raw(),
+            page.width(),
+            page.height(),
+            ExtendedColorType::L8,
+        )?;
         "jpg"
     };
     Ok((extension.to_string(), bytes))
@@ -210,5 +236,34 @@ fn crop_policy(options: &PipelineOptions) -> CropPolicy {
         preserve_margin_percent: options.preserve_margin_percent,
         // fillCheck() isn't ported yet -- see process_page's fill comment.
         background: Background::White,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scribe_and_colorsoft_profiles_default_to_90() {
+        assert_eq!(
+            default_jpeg_quality(crate::profile::Profile::by_code("KS").unwrap()),
+            90
+        );
+        assert_eq!(
+            default_jpeg_quality(crate::profile::Profile::by_code("KCS").unwrap()),
+            90
+        );
+        assert_eq!(
+            default_jpeg_quality(crate::profile::Profile::by_code("KS3").unwrap()),
+            90
+        );
+    }
+
+    #[test]
+    fn other_profiles_default_to_85() {
+        assert_eq!(
+            default_jpeg_quality(crate::profile::Profile::by_code("KV").unwrap()),
+            85
+        );
     }
 }

@@ -21,8 +21,24 @@ pub fn build_cbz(chapters: &[Chapter], comic_info_xml: Option<&[u8]>) -> Result<
         entries.push(("ComicInfo.xml".to_string(), xml.to_vec()));
     }
 
+    // Chapter titles are only the parent directory's basename (see
+    // `super::group_into_chapters`), so two chapters at different paths can
+    // legitimately share one (e.g. "VolumeA/Extras" and "VolumeB/Extras").
+    // The first chapter with a given title keeps it unchanged -- this is
+    // the overwhelmingly common case and matches every existing fixture --
+    // later duplicates get a disambiguating suffix instead of silently
+    // colliding into the same zip directory.
+    let mut seen_title_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for chapter in chapters {
-        let safe_title = chapter.title.replace(['/', '\\'], "-");
+        let base_title = chapter.title.replace(['/', '\\'], "-");
+        let occurrence = seen_title_counts.entry(base_title.clone()).or_insert(0);
+        *occurrence += 1;
+        let safe_title = if *occurrence == 1 {
+            base_title
+        } else {
+            format!("{base_title} ({occurrence})")
+        };
         for (page_index, page) in chapter.pages.iter().enumerate() {
             let name = format!("{safe_title}/p{:04}.{}", page_index + 1, page.extension);
             entries.push((name, page.bytes.clone()));
@@ -85,6 +101,20 @@ mod tests {
                 "c002 - Two/p0001.jpg",
             ]
         );
+    }
+
+    #[test]
+    fn duplicate_chapter_titles_get_disambiguated() {
+        // "VolumeA/Extras" and "VolumeB/Extras" both title their chapter
+        // "Extras" -- the first keeps the plain name, the second must not
+        // collide with it in the output zip.
+        let chapters = vec![chapter("Extras", 1), chapter("Extras", 1)];
+        let bytes = build_cbz(&chapters, None).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let names: Vec<String> = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .collect();
+        assert_eq!(names, vec!["Extras/p0001.jpg", "Extras (2)/p0001.jpg"]);
     }
 
     #[test]

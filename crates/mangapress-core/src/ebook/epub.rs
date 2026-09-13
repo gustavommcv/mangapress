@@ -46,7 +46,23 @@ pub fn build_epub(chapters: &[Chapter], options: &EpubOptions) -> Result<Vec<u8>
         return Err(Error::EmptyBook);
     }
 
-    let identifier = synthetic_identifier(&options.title);
+    // Hashing only the title (as an earlier version of this function did)
+    // gives two different books sharing a title the exact same
+    // `dc:identifier` -- widen the seed with author and per-chapter titles
+    // so distinct books collide only in the (still not cryptographically
+    // guaranteed, but now far less likely) case that all of those also
+    // match.
+    let identifier_seed = format!(
+        "{}\u{0}{}\u{0}{}",
+        options.title,
+        options.author,
+        chapters
+            .iter()
+            .map(|c| c.title.as_str())
+            .collect::<Vec<_>>()
+            .join("\u{0}")
+    );
+    let identifier = synthetic_identifier(&identifier_seed);
 
     // EPUB OCF requires `mimetype` to be the first entry and stored
     // uncompressed; everything else in this ZIP is stored uncompressed too
@@ -193,6 +209,10 @@ fn build_page_xhtml(title: &str, image_path_from_oebps: &str, width: u32, height
 <title>{title}</title>
 <meta charset="utf-8"/>
 {viewport}
+<style type="text/css">
+html, body {{ margin: 0; padding: 0; }}
+img {{ display: block; width: 100%; height: 100%; }}
+</style>
 </head>
 <body>
 <img src="{image_href}" alt=""/>

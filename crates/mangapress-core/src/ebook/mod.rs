@@ -32,18 +32,26 @@ pub struct Chapter {
     pub pages: Vec<Page>,
 }
 
-/// Groups already-extracted, naturally-sorted [`SourceEntry`] values into
-/// [`Chapter`]s by parent directory — reproducing upstream's `buildEPUB()`
-/// behavior of treating every directory that contains qualifying files as
-/// its own chapter (see the ADR above for the full reasoning, including the
-/// one deliberate divergence: chapters are keyed/titled by full path here,
-/// not by directory basename alone).
+/// Groups already-extracted [`SourceEntry`] values into [`Chapter`]s by
+/// parent directory — reproducing upstream's `buildEPUB()` behavior of
+/// treating every directory that contains qualifying files as its own
+/// chapter (see the ADR above for the full reasoning, including the one
+/// deliberate divergence: chapters are keyed/titled by full path here, not
+/// by directory basename alone).
 ///
-/// `entries` must already be in the order [`crate::archive::cbz::extract_cbz`]
-/// produces (natural sort, chapter-directory-first) — this function does not
-/// re-sort, it only groups adjacent entries that share a parent directory.
+/// Every entry sharing the same parent directory lands in the same
+/// [`Chapter`], regardless of where else in `entries` that parent
+/// reappears — a recursive directory walk (or any input not perfectly
+/// grouped by adjacency already) can otherwise interleave a chapter's own
+/// entries with a nested subfolder's, which a simpler "same as the
+/// previous entry's parent" check would see as two separate chapters
+/// sharing one directory. A chapter's position in the output follows where
+/// its *first* entry appeared, matching natural-sort order for input that
+/// is already contiguous per directory (the common case).
 pub fn group_into_chapters(entries: Vec<SourceEntry>) -> Vec<Chapter> {
     let mut chapters: Vec<Chapter> = Vec::new();
+    let mut chapter_index_by_parent: std::collections::HashMap<PathBuf, usize> =
+        std::collections::HashMap::new();
 
     for entry in entries {
         let parent = entry
@@ -61,23 +69,22 @@ pub fn group_into_chapters(entries: Vec<SourceEntry>) -> Vec<Chapter> {
             bytes: entry.bytes,
         };
 
-        let starts_new_chapter = chapters
-            .last()
-            .is_none_or(|c: &Chapter| c.relative_path != parent);
-
-        if starts_new_chapter {
-            let title = parent
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "Untitled".to_string());
-            chapters.push(Chapter {
-                relative_path: parent,
-                title,
-                pages: Vec::new(),
+        let chapter_index = *chapter_index_by_parent
+            .entry(parent.clone())
+            .or_insert_with(|| {
+                let title = parent
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Untitled".to_string());
+                chapters.push(Chapter {
+                    relative_path: parent,
+                    title,
+                    pages: Vec::new(),
+                });
+                chapters.len() - 1
             });
-        }
 
-        chapters.last_mut().unwrap().pages.push(page);
+        chapters[chapter_index].pages.push(page);
     }
 
     chapters
@@ -86,6 +93,7 @@ pub fn group_into_chapters(entries: Vec<SourceEntry>) -> Vec<Chapter> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn entry(path: &str, bytes: &[u8]) -> SourceEntry {
         SourceEntry {
@@ -109,6 +117,34 @@ mod tests {
         assert_eq!(chapters[0].pages[1].extension, "png");
         assert_eq!(chapters[1].title, "c002 - Title Two");
         assert_eq!(chapters[1].pages.len(), 1);
+    }
+
+    #[test]
+    fn reunites_a_chapters_entries_even_when_a_nested_subfolder_interleaves_them() {
+        // Recursive input can legitimately produce this order: a file
+        // directly in "a", then a file in "a"'s own subfolder "a/b", then
+        // another file directly in "a" again. All the direct-in-"a" pages
+        // must land in one chapter, not be split across two.
+        let entries = vec![
+            entry("a/a.jpg", b"1"),
+            entry("a/b/p.jpg", b"2"),
+            entry("a/c.jpg", b"3"),
+        ];
+        let chapters = group_into_chapters(entries);
+        assert_eq!(
+            chapters.len(),
+            2,
+            "expected one chapter for \"a\", one for \"a/b\""
+        );
+        let a_chapter = chapters
+            .iter()
+            .find(|c| c.relative_path == Path::new("a"))
+            .expect("a chapter for \"a\" should exist");
+        assert_eq!(
+            a_chapter.pages.len(),
+            2,
+            "both of \"a\"'s own pages should be in the same chapter"
+        );
     }
 
     #[test]

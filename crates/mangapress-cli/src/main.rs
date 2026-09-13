@@ -12,6 +12,7 @@ use mangapress_core::pipeline::{
 };
 use mangapress_core::profile::Profile;
 use std::io::{IsTerminal, Write as _};
+use std::path::{Path, PathBuf};
 
 /// A resolved book title (from `--title`, `ComicInfo.xml`'s `Series`/`Title`,
 /// or the input filename) can contain characters that are illegal in a
@@ -21,6 +22,64 @@ use std::io::{IsTerminal, Write as _};
 /// filename.
 fn sanitize_filename(name: &str) -> String {
     name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "-")
+}
+
+/// Best-effort "do these two paths refer to the same file" check. `input`
+/// always exists by this point; `candidate_output` usually doesn't yet, so
+/// this can't just canonicalize both and compare -- it canonicalizes
+/// `candidate_output`'s parent instead and rejoins the file name. Good
+/// enough to catch the case this exists for (an unset `--output`, or an
+/// explicit one, that resolves to the same file being read) without a new
+/// dependency; it isn't a substitute for a real same-file check across
+/// hardlinks etc.
+fn same_file(input: &Path, candidate_output: &Path) -> bool {
+    fn resolve(path: &Path) -> Option<PathBuf> {
+        if path.exists() {
+            return std::fs::canonicalize(path).ok();
+        }
+        let parent = path.parent().filter(|p| !p.as_os_str().is_empty())?;
+        let file_name = path.file_name()?;
+        Some(std::fs::canonicalize(parent).ok()?.join(file_name))
+    }
+
+    match (resolve(input), resolve(candidate_output)) {
+        (Some(a), Some(b)) => a == b,
+        _ => input == candidate_output,
+    }
+}
+
+/// A sibling path that doesn't collide with `path`, for when `path` would
+/// otherwise overwrite the very input it was derived from. Mirrors KCC's
+/// own `getOutputFilename()`, which appends a `_kccN` suffix for the same
+/// reason: converting a `.cbz` back to `.cbz` with no explicit `--output`
+/// would otherwise destroy the source file being read.
+fn disambiguate_output_path(path: &Path) -> PathBuf {
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let extension = path.extension().map(|e| e.to_string_lossy().into_owned());
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+
+    for n in 1.. {
+        let name = if n == 1 {
+            format!("{stem} (mangapress)")
+        } else {
+            format!("{stem} (mangapress {n})")
+        };
+        let candidate_name = match &extension {
+            Some(ext) => format!("{name}.{ext}"),
+            None => name,
+        };
+        let candidate = match parent {
+            Some(dir) => dir.join(candidate_name),
+            None => PathBuf::from(candidate_name),
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!()
 }
 
 fn main() -> anyhow::Result<()> {
@@ -115,6 +174,18 @@ fn main() -> anyhow::Result<()> {
         eprintln!("found ComicInfo.xml");
     }
 
+    let (source_entries, skipped_non_images) =
+        mangapress_core::archive::filter_image_entries(source_entries);
+    if skipped_non_images > 0 {
+        eprintln!(
+            "warning: skipped {skipped_non_images} non-image file(s) in the input (not a \
+             recognized image extension)"
+        );
+    }
+    if source_entries.is_empty() {
+        bail!("no recognized page images found in {}", input.display());
+    }
+
     let resolved = metadata::resolve(
         comic_info.as_ref(),
         cli.title.as_deref(),
@@ -147,6 +218,19 @@ fn main() -> anyhow::Result<()> {
         }
         Some(path) => path.clone(),
         None => input.with_extension(extension),
+    };
+    // With no --output (or an explicit one matching the input), converting
+    // a `.cbz` back to `.cbz` would otherwise silently overwrite the very
+    // source file being read.
+    let output_path = if same_file(&input, &output_path) {
+        let disambiguated = disambiguate_output_path(&output_path);
+        eprintln!(
+            "warning: output would overwrite the input file; writing to {} instead",
+            disambiguated.display()
+        );
+        disambiguated
+    } else {
+        output_path
     };
 
     if cli.dry_run {
@@ -202,6 +286,7 @@ fn main() -> anyhow::Result<()> {
         autolevel: cli.autolevel,
         noautocontrast: cli.noautocontrast,
         erase_rainbow: cli.eraserainbow,
+        jpeg_quality: cli.jpeg_quality,
     };
 
     // Interactive terminals get a live per-page counter (overwritten in
@@ -267,7 +352,13 @@ fn main() -> anyhow::Result<()> {
                 .flatten();
             cbz_out::build_cbz(&processed_chapters, keep_xml)?
         }
-        Format::Pdf => pdf::build_pdf(&processed_chapters)?,
+        Format::Pdf => pdf::build_pdf(
+            &processed_chapters,
+            &pdf::PdfOptions {
+                title: title.clone(),
+                author: author.clone(),
+            },
+        )?,
     };
 
     std::fs::write(&output_path, &output_bytes)

@@ -27,13 +27,24 @@ use crate::error::{Error, Result};
 use image::DynamicImage;
 use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, Pt, RawImage, XObjectTransform};
 
-pub fn build_pdf(chapters: &[Chapter]) -> Result<Vec<u8>> {
+/// Resolved title/author to embed in the PDF's own Info dictionary — mirrors
+/// [`super::epub::EpubOptions`]'s title/author fields (see
+/// [`crate::metadata::resolve`], which produces both from the CLI and any
+/// `ComicInfo.xml`).
+pub struct PdfOptions {
+    pub title: String,
+    pub author: String,
+}
+
+pub fn build_pdf(chapters: &[Chapter], options: &PdfOptions) -> Result<Vec<u8>> {
     let chapters: Vec<&Chapter> = chapters.iter().filter(|c| !c.pages.is_empty()).collect();
     if chapters.is_empty() {
         return Err(Error::EmptyBook);
     }
 
-    let mut doc = PdfDocument::new("mangapress");
+    let mut doc = PdfDocument::new(&options.title);
+    doc.metadata.info.document_title = options.title.clone();
+    doc.metadata.info.author = options.author.clone();
     let mut pdf_pages = Vec::new();
 
     for chapter in chapters {
@@ -104,15 +115,25 @@ mod tests {
             .expect("mangapress's own PDF output should parse back cleanly")
     }
 
+    fn default_options() -> PdfOptions {
+        PdfOptions {
+            title: "Test Book".to_string(),
+            author: "Test Author".to_string(),
+        }
+    }
+
     #[test]
     fn empty_book_is_rejected() {
-        assert!(matches!(build_pdf(&[]), Err(Error::EmptyBook)));
+        assert!(matches!(
+            build_pdf(&[], &default_options()),
+            Err(Error::EmptyBook)
+        ));
     }
 
     #[test]
     fn starts_with_the_pdf_header() {
         let chapters = vec![chapter_with_pages(&[(100, 150)])];
-        let bytes = build_pdf(&chapters).unwrap();
+        let bytes = build_pdf(&chapters, &default_options()).unwrap();
         assert!(bytes.starts_with(b"%PDF"), "output should be a real PDF");
     }
 
@@ -122,7 +143,7 @@ mod tests {
             chapter_with_pages(&[(100, 100), (100, 100)]),
             chapter_with_pages(&[(100, 100)]),
         ];
-        let bytes = build_pdf(&chapters).unwrap();
+        let bytes = build_pdf(&chapters, &default_options()).unwrap();
         let parsed = parse_back(&bytes);
         assert_eq!(parsed.pages.len(), 3);
     }
@@ -133,7 +154,7 @@ mod tests {
         // by reading XObjectTransform::get_ctms() rather than assumed from
         // documentation (see module docs).
         let chapters = vec![chapter_with_pages(&[(300, 150), (80, 200)])];
-        let bytes = build_pdf(&chapters).unwrap();
+        let bytes = build_pdf(&chapters, &default_options()).unwrap();
         let parsed = parse_back(&bytes);
 
         assert_eq!(parsed.pages.len(), 2);
@@ -141,5 +162,18 @@ mod tests {
         assert!((parsed.pages[0].media_box.height.0 - 150.0).abs() < 0.5);
         assert!((parsed.pages[1].media_box.width.0 - 80.0).abs() < 0.5);
         assert!((parsed.pages[1].media_box.height.0 - 200.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn resolved_title_and_author_are_embedded_in_the_pdf_info_dictionary() {
+        let chapters = vec![chapter_with_pages(&[(100, 100)])];
+        let options = PdfOptions {
+            title: "Chainsaw Man Vol. 01".to_string(),
+            author: "Tatsuki Fujimoto".to_string(),
+        };
+        let bytes = build_pdf(&chapters, &options).unwrap();
+        let parsed = parse_back(&bytes);
+        assert_eq!(parsed.metadata.info.document_title, "Chainsaw Man Vol. 01");
+        assert_eq!(parsed.metadata.info.author, "Tatsuki Fujimoto");
     }
 }

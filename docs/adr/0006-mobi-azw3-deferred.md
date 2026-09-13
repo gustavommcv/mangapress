@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted.
+Superseded by [0008-mobi-azw3-permanently-out-of-scope.md](0008-mobi-azw3-permanently-out-of-scope.md)
+— what started here as "not yet" became "not at all" once the project's
+actual reading target (KOReader, not native Kindle firmware) made the
+gap moot rather than temporary.
 
 ## Context
 

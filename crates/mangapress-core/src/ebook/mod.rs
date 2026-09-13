@@ -4,8 +4,8 @@
 //! pages (`printpdf`), unlike upstream KCC which also uses PyMuPDF to
 //! *read* PDF input.
 //!
-//! MOBI/AZW3 is deliberately out of scope for now — see
-//! `docs/adr/0006-mobi-azw3-deferred.md`.
+//! MOBI/AZW3 is permanently out of scope — see
+//! `docs/adr/0008-mobi-azw3-permanently-out-of-scope.md`.
 
 pub mod cbz_out;
 pub mod epub;

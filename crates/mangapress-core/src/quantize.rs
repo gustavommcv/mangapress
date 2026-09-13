@@ -17,7 +17,8 @@
 //! this content was a quantized GIF, not full-tone JPEG — upstream's
 //! `save_with_codec()` only picks that path when `--forcepng` combines
 //! with a Kindle-AZW3-specific GIF branch this project doesn't support
-//! (MOBI/AZW3 is out of scope, see `docs/adr/0006-mobi-azw3-deferred.md`);
+//! (MOBI/AZW3 is out of scope, see
+//! `docs/adr/0008-mobi-azw3-permanently-out-of-scope.md`);
 //! the PNG branch (relevant here) doesn't depend on that. The algorithm
 //! below is the same either way — only the container format differs.
 

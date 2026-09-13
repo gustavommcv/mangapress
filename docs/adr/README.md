@@ -5,5 +5,6 @@
 3. [Two-crate workspace: `mangapress-core` (lib) + `mangapress-cli` (bin)](0003-workspace-layout.md)
 4. [Dual-license under MIT OR Apache-2.0](0004-license-dual-mit-apache.md)
 5. [The Mangabind chapter-subfolder contract, and fixing a KCC bug while preserving it](0005-mangabind-contract.md)
-6. [Defer MOBI/AZW3 output](0006-mobi-azw3-deferred.md)
+6. ~~[Defer MOBI/AZW3 output](0006-mobi-azw3-deferred.md)~~ — superseded by 8
 7. [Treat KCC's `image.py` and `dualmetafix.py` as specification, not source to port](0007-gplv3-boundary-kcc-image-rs.md)
+8. [MOBI/AZW3 is permanently out of scope](0008-mobi-azw3-permanently-out-of-scope.md)

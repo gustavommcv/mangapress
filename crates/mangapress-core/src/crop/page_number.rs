@@ -134,40 +134,7 @@ pub fn compute_margin_crop_ignoring_page_number(
     apply_policy(bbox, img.dimensions(), policy)
 }
 
-/// `group_close_values()` (`common_crop.py`). `vals` must already be sorted
-/// ascending (matches how `np.where(...)` produces them upstream).
-///
-/// Faithfully reproduces an upstream quirk: the value that triggers a group
-/// split (too far from the current group) is dropped entirely — neither
-/// appended to the group it broke away from, nor used to start the next
-/// one. Confirmed by tracing the source rather than assumed.
-fn group_close_values(vals: &[i64], max_dist_tolerated: f64) -> Vec<(i64, i64)> {
-    let mut groups = Vec::new();
-    let mut group_start: Option<i64> = None;
-    let mut group_end: i64 = 0;
-
-    for &v in vals {
-        match group_start {
-            None => {
-                group_start = Some(v);
-                group_end = v;
-            }
-            Some(gs) => {
-                let dist = (v - group_end) as f64;
-                if dist <= max_dist_tolerated {
-                    group_end = v;
-                } else {
-                    groups.push((gs, group_end));
-                    group_start = None;
-                }
-            }
-        }
-    }
-    if let Some(gs) = group_start {
-        groups.push((gs, group_end));
-    }
-    groups
-}
+use super::group_close_values;
 
 /// `box_intersect()`: are `box1`/`box2` within `max_dist` (per-axis) of each
 /// other?
@@ -240,19 +207,6 @@ mod tests {
                 Luma([255])
             }
         })
-    }
-
-    #[test]
-    fn group_close_values_merges_within_tolerance_and_splits_beyond_it() {
-        assert_eq!(
-            group_close_values(&[1, 2, 3, 100, 101], 5.0),
-            vec![(1, 3), (101, 101)]
-        );
-    }
-
-    #[test]
-    fn group_close_values_of_empty_input_is_empty() {
-        assert_eq!(group_close_values(&[], 5.0), vec![]);
     }
 
     #[test]

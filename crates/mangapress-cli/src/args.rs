@@ -76,6 +76,10 @@ pub struct Cli {
     #[arg(long)]
     pub noautocontrast: bool,
 
+    /// Crop empty inter-panel sections.
+    #[arg(long = "ipc", value_enum, default_value_t = InterPanelCrop::Disabled)]
+    pub interpanelcrop: InterPanelCrop,
+
     /// Output format.
     #[arg(short, long, value_enum, default_value_t = Format::Epub)]
     pub format: Format,
@@ -126,4 +130,11 @@ pub enum Format {
     Epub,
     Cbz,
     Pdf,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InterPanelCrop {
+    Disabled,
+    Horizontal,
+    Both,
 }

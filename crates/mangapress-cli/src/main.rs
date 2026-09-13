@@ -1,7 +1,7 @@
 mod args;
 
 use anyhow::{bail, Context};
-use args::{Cli, Cropping, Format, Splitter};
+use args::{Cli, Cropping, Format, InterPanelCrop, Splitter};
 use clap::Parser;
 use mangapress_core::archive::{cbz::extract_cbz, folder::read_folder, SourceEntry};
 use mangapress_core::ebook::{cbz_out, epub, group_into_chapters, Chapter, Page};
@@ -82,7 +82,15 @@ fn main() -> anyhow::Result<()> {
         },
         cropping_power: 1.0,
         cropping_minimum: 0.0,
-        inter_panel_crop: mangapress_core::crop::inter_panel::InterPanelMode::Disabled,
+        inter_panel_crop: match cli.interpanelcrop {
+            InterPanelCrop::Disabled => {
+                mangapress_core::crop::inter_panel::InterPanelMode::Disabled
+            }
+            InterPanelCrop::Horizontal => {
+                mangapress_core::crop::inter_panel::InterPanelMode::Horizontal
+            }
+            InterPanelCrop::Both => mangapress_core::crop::inter_panel::InterPanelMode::Both,
+        },
         splitter: match cli.splitter {
             Splitter::Split => SplitterMode::Split,
             Splitter::Rotate => SplitterMode::Rotate,

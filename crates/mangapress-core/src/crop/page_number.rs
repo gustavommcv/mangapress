@@ -93,22 +93,28 @@ pub fn get_bbox_crop_margin_page_number(
         .filter(|b| b.3 == lowest_row)
         .collect();
 
+    // Confirmed against the real upstream source (`page_number_crop_alg.py`,
+    // both the pinned research commit and current `master`): when no box
+    // reaches the window's very last row, upstream's `min_y_of_lowest_boxes`
+    // stays at its literal initial value, `0` — it is NOT special-cased to
+    // skip the crop. That makes the `>= min_y_of_lowest_boxes` filter below
+    // a no-op in that case (every box's row index is `>= 0`), retaining
+    // every remaining candidate box rather than none. An earlier version of
+    // this function "fixed" this as if it were a bug without checking the
+    // actual source; it wasn't one — this is upstream's real, confirmed
+    // behavior, and reproducing it (not "correcting" it) is the goal here.
     let min_y_of_lowest_boxes = lowest_boxes
         .iter()
         .map(|b| b.2)
         .fold(None, |acc: Option<f64>, v| {
             Some(acc.map_or(v, |a| a.min(v)))
-        });
+        })
+        .unwrap_or(0.0);
 
-    // No box reaches the window's very last row -- there's no bottom anchor
-    // to restrict against, so there's nothing plausibly page-number-shaped
-    // near the bottom edge. Falling back to a sentinel here (e.g. 0.0) would
-    // make the `>=` filter below accept every remaining box in the window,
-    // defeating its own purpose.
-    let boxes_in_same_y_range: Vec<RowBox> = match min_y_of_lowest_boxes {
-        Some(min_y) => boxes.into_iter().filter(|b| b.3 >= min_y).collect(),
-        None => Vec::new(),
-    };
+    let boxes_in_same_y_range: Vec<RowBox> = boxes
+        .into_iter()
+        .filter(|b| b.3 >= min_y_of_lowest_boxes)
+        .collect();
 
     let max_shape_w = w as f64 * MAX_SHAPE_WIDTH_FRAC;
     let max_shape_h = (h as f64 * MAX_SHAPE_HEIGHT_FRAC).max(3.0);
@@ -119,7 +125,14 @@ pub fn get_bbox_crop_margin_page_number(
 
     let restrict_to = if should_force_crop {
         let top_row = boxes_in_same_y_range[0].2;
-        let new_bottom = bbox.bottom as f64 - (window_h as f64 - top_row);
+        // `bot_y_pos - (window_h - top_row + 1)` in the real upstream
+        // source, confirmed by reading it directly — the `+ 1` is not an
+        // off-by-one, it's upstream's actual formula. An earlier version of
+        // this function dropped it based on what the *intended* boundary
+        // "should" be without checking the source; upstream's real value is
+        // one row less permissive than that, and matching it (not our own
+        // derivation of what seems more correct) is the goal here.
+        let new_bottom = bbox.bottom as f64 - (window_h as f64 - top_row + 1.0);
         new_bottom.max(0.0) as u32
     } else {
         h

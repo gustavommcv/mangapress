@@ -44,14 +44,24 @@ mangapress also doesn't download or organize chapters — that's
 [Mangabind](https://github.com/gustavommcv/mangabind)'s job, respectively; mangapress only ever
 reads a finished `.cbz`/folder and writes a converted book.
 
+**Not yet in scope:** color output. Every page is converted to grayscale, even on the
+color-capable profiles this project already lists (`KCS` Kindle Colorsoft, `KoCC` Kobo Clara
+Colour, `KoLC` Kobo Libra Colour) — picking one of those today gets the right resolution and
+nothing else color-specific. Fine for traditionally black-and-white manga (the common case this
+project targets), not for webtoons or color manga read on color-capable hardware. See
+[docs/adr/0010-color-output-deferred.md](docs/adr/0010-color-output-deferred.md) for why, and what
+adding it would actually involve. `--eraserainbow` (below) does not change this — it fixes a
+display artifact, it doesn't produce color output.
+
 ## Status
 
 Functional: device profiles for ~40 Kindle/Kobo/reMarkable/generic targets, the full image
 pipeline (margin and page-number-aware cropping, inter-panel cropping, resize, gamma/autocontrast,
-double-page-spread split/rotate, rainbow-artifact removal for color e-ink), `ComicInfo.xml`
-metadata resolution, and EPUB/CBZ/PDF output all work end to end and are covered by an extensive
-test suite. Still pre-1.0 — see [docs/adr](docs/adr/README.md) for the design decisions made so
-far, and open an issue if you hit a rough edge.
+double-page-spread split/rotate, rainbow-artifact removal), `ComicInfo.xml` metadata resolution,
+and EPUB/CBZ/PDF output all work end to end and are covered by an extensive test suite — see
+[docs/adr](docs/adr/README.md) for the design decisions made so far, and open an issue if you hit
+a rough edge. Everything is grayscale output today regardless of profile (see "Not yet in scope"
+above) — still pre-1.0.
 
 ## Install
 
@@ -113,7 +123,10 @@ A few of the more commonly used flags:
 - `--cropping <disabled|margins|margins-and-page-numbers>` — margin detection, with or without
   page-number-aware trimming (default: both).
 - `--splitter <split|rotate|both>` — how to handle double-page spreads.
-- `--eraserainbow` — attenuate Moire interference on color e-ink (Kaleido-style) panels.
+- `--eraserainbow` — attenuate Moire interference between halftone screentone and a color e-ink
+  (Kaleido-style) panel's diagonal subpixel grid. A display-artifact fix, not color output —
+  everything still converts to grayscale regardless of this flag or `--profile` (see "Not yet in
+  scope" above).
 - `--keepcomicinfo` — carry the source's `ComicInfo.xml` through into `.cbz` output.
 
 Run `mangapress --help` for the full list, including cropping-aggressiveness tuning

@@ -56,6 +56,11 @@ pub struct Cli {
     #[arg(long)]
     pub forcepng: bool,
 
+    /// Rotate double-page spreads clockwise instead of the default
+    /// counter-clockwise.
+    #[arg(long)]
+    pub rotateright: bool,
+
     /// Output format.
     #[arg(short, long, value_enum, default_value_t = Format::Epub)]
     pub format: Format,

@@ -32,6 +32,9 @@ pub struct PipelineOptions {
     pub stretch: bool,
     pub wallpaper: bool,
     pub white_borders: bool,
+    /// `--rotateright`: rotate spreads clockwise instead of the default
+    /// counter-clockwise. See [`spread::execute`].
+    pub rotate_right: bool,
     pub output_format: OutputFormat,
     /// `--forcepng`: quantize to the profile's grayscale palette (Floyd-
     /// Steinberg dithered) and save PNG instead of full-tone JPEG. Mirrors
@@ -78,25 +81,44 @@ pub enum OutputFormat {
     Pdf,
 }
 
-/// Processes a single source page: decode -> grayscale -> crop -> resize ->
-/// quantize (if `--forcepng`) -> encode. Returns one output page per
-/// element — always exactly one today, since double-page-spread
-/// splitting/rotation ([`spread::decide`] exists and is tested, but isn't
-/// wired to actual image transformation yet) isn't executed here.
+/// Processes a single source page: decode -> grayscale -> spread
+/// decide/execute -> (per resulting page) crop -> resize -> quantize (if
+/// `--forcepng`) -> encode. A double-page spread can expand into two split
+/// halves and/or a rotated whole (see [`spread::execute`]) *before*
+/// cropping — matching upstream's order, where spread detection runs on
+/// the original page and crop/resize apply independently to each resulting
+/// piece, not the other way around.
 ///
 /// Also not yet applied, tracked as gaps rather than silently skipped:
 /// gamma correction, autocontrast, inter-panel crop, and rainbow-artifact
 /// removal — each exists only as a `todo!()` in its own module still. What
-/// *is* applied (crop, resize, quantize) has its own fixture-backed tests
-/// in [`crate::crop`], [`crate::resize`], and [`crate::quantize`]; this
-/// function's job is only to wire already-validated pieces together in the
-/// right order, not to introduce new heuristics of its own.
+/// *is* applied (spread, crop, resize, quantize) has its own fixture-backed
+/// tests in [`spread`], [`crate::crop`], [`crate::resize`], and
+/// [`crate::quantize`]; this function's job is only to wire already-
+/// validated pieces together in the right order, not to introduce new
+/// heuristics of its own.
 pub fn process_page(
     source_bytes: &[u8],
     options: &PipelineOptions,
 ) -> Result<Vec<(String, Vec<u8>)>> {
     let page = image::load_from_memory(source_bytes)?.to_luma8();
+    let target = options.target_resolution();
 
+    let decision = spread::decide(page.dimensions(), target, options.splitter);
+    let variants = spread::execute(&page, decision, options.manga_style, options.rotate_right);
+
+    let mut outputs = Vec::with_capacity(variants.len());
+    for variant in variants {
+        outputs.push(finish_page(variant, target, options)?);
+    }
+    Ok(outputs)
+}
+
+fn finish_page(
+    page: image::GrayImage,
+    target: (u32, u32),
+    options: &PipelineOptions,
+) -> Result<(String, Vec<u8>)> {
     let page = match options.cropping {
         CroppingMode::Disabled => page,
         CroppingMode::Margins => {
@@ -116,7 +138,7 @@ pub fn process_page(
     };
 
     let resize_options = ResizeOptions {
-        target: options.target_resolution(),
+        target,
         upscale: options.upscale,
         stretch: options.stretch,
         wallpaper: options.wallpaper,
@@ -142,7 +164,7 @@ pub fn process_page(
             .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Jpeg)?;
         "jpg"
     };
-    Ok(vec![(extension.to_string(), bytes)])
+    Ok((extension.to_string(), bytes))
 }
 
 fn crop_policy(options: &PipelineOptions) -> CropPolicy {

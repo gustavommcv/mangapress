@@ -92,6 +92,7 @@ fn main() -> anyhow::Result<()> {
         stretch: cli.stretch,
         wallpaper: cli.wallpaper,
         white_borders: cli.whiteborders,
+        rotate_right: cli.rotateright,
         force_png: cli.forcepng,
         output_format: match cli.format {
             Format::Epub => OutputFormat::Epub,

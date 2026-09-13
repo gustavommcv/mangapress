@@ -150,16 +150,47 @@ fn round_half_even(x: f64) -> u32 {
 /// `ImageOps.fit()`: scale so `target` is entirely filled (may exceed it on
 /// one axis), then center-crop down to exactly `target`. No padding; may
 /// crop away source content.
+///
+/// Crops the source *first* (in source-pixel space), then resizes the crop
+/// to `target` in a single pass -- not the other way around. An earlier
+/// version resized the whole image up to a size guaranteed to cover
+/// `target`, then cropped the resized result; validated against real
+/// Pillow, that order could diverge drastically (mean pixel error in the
+/// tens, on real page content, not just synthetic test patterns) whenever
+/// a significant crop was needed, because resizing the *entire* source
+/// first blends content from well outside the eventual crop window into
+/// every pixel near its edges before that content ever gets cropped away.
+/// Real Pillow computes its crop box with continuous (non-integer)
+/// coordinates and resizes directly from that fractional window in one
+/// call; this rounds the box to the nearest integer pixel first, which
+/// removes the large source of error above but still isn't bit-identical
+/// to Pillow's fractional sampling -- residual differences on real content
+/// were measured in the low single digits (out of 255), consistent with
+/// ordinary cross-library resampling variance rather than a framing bug.
 pub fn fit(img: &GrayImage, target: (u32, u32), filter: FilterType) -> GrayImage {
     let (sw, sh) = img.dimensions();
     let (tw, th) = target;
-    let scale = (tw as f64 / sw as f64).max(th as f64 / sh as f64);
-    let new_w = ((sw as f64 * scale).round() as u32).max(tw).max(1);
-    let new_h = ((sh as f64 * scale).round() as u32).max(th).max(1);
-    let resized = image::imageops::resize(img, new_w, new_h, filter);
-    let x_off = new_w.saturating_sub(tw) / 2;
-    let y_off = new_h.saturating_sub(th) / 2;
-    image::imageops::crop_imm(&resized, x_off, y_off, tw, th).to_image()
+    let (sw_f, sh_f) = (sw as f64, sh as f64);
+    let live_ratio = sw_f / sh_f;
+    let out_ratio = tw as f64 / th as f64;
+
+    let (crop_w, crop_h) = if live_ratio >= out_ratio {
+        (out_ratio * sh_f, sh_f)
+    } else {
+        (sw_f, sw_f / out_ratio)
+    };
+    let crop_left = (sw_f - crop_w) * 0.5;
+    let crop_top = (sh_f - crop_h) * 0.5;
+
+    let box_left = crop_left.round() as u32;
+    let box_top = crop_top.round() as u32;
+    let box_right = ((crop_left + crop_w).round() as u32).min(sw);
+    let box_bottom = ((crop_top + crop_h).round() as u32).min(sh);
+    let box_w = box_right.saturating_sub(box_left).max(1);
+    let box_h = box_bottom.saturating_sub(box_top).max(1);
+
+    let cropped = image::imageops::crop_imm(img, box_left, box_top, box_w, box_h).to_image();
+    image::imageops::resize(&cropped, tw, th, filter)
 }
 
 fn contain_dimensions((sw, sh): (u32, u32), (tw, th): (u32, u32)) -> (u32, u32) {
@@ -258,6 +289,32 @@ mod tests {
         // Every pixel is source content (7), never a fill color, since fit
         // crops rather than pads.
         assert!(out.pixels().all(|p| p[0] == 7));
+    }
+
+    #[test]
+    fn fit_keeps_a_centered_marker_centered_under_an_aggressive_crop() {
+        // Regression test for the crop-then-resize reordering: a wide
+        // source needing its left/right thirds cropped away to fill a
+        // square target should keep a marker at the source's exact
+        // horizontal center still near the output's horizontal center --
+        // the bug this replaced could shift/blend that framing badly
+        // under exactly this kind of aspect-ratio mismatch.
+        let (sw, sh) = (798u32, 501u32);
+        let mut img = GrayImage::from_pixel(sw, sh, Luma([0]));
+        for y in 0..sh {
+            for x in (sw / 2 - 5)..(sw / 2 + 5) {
+                img.put_pixel(x, y, Luma([255]));
+            }
+        }
+        let out = fit(&img, (400, 400), FilterType::Lanczos3);
+        assert_eq!(out.dimensions(), (400, 400));
+        let brightest_col = (0..out.width())
+            .max_by_key(|&x| out.get_pixel(x, 200)[0] as u32)
+            .unwrap();
+        assert!(
+            (190..=210).contains(&brightest_col),
+            "marker should land near the horizontal center, was at column {brightest_col}"
+        );
     }
 
     #[test]

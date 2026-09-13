@@ -49,6 +49,9 @@ pub struct PipelineOptions {
     pub autolevel: bool,
     /// `--noautocontrast`: skip autocontrast entirely.
     pub noautocontrast: bool,
+    /// `--eraserainbow`: run [`crate::rainbow::erase_rainbow_artifacts_gray`]
+    /// after resize.
+    pub erase_rainbow: bool,
 }
 
 impl PipelineOptions {
@@ -87,20 +90,18 @@ pub enum OutputFormat {
 
 /// Processes a single source page: decode -> grayscale -> spread
 /// decide/execute -> (per resulting page) crop -> inter-panel crop -> gamma
-/// -> autocontrast -> resize -> quantize (if `--forcepng`) -> encode. A
-/// double-page spread can expand into two split halves and/or a rotated
-/// whole (see [`spread::execute`]) *before* cropping — matching upstream's
-/// order, where spread detection runs on the original page and crop/resize
-/// apply independently to each resulting piece, not the other way around.
+/// -> autocontrast -> resize -> rainbow-artifact removal (if
+/// `--eraserainbow`) -> quantize (if `--forcepng`) -> encode. A double-page
+/// spread can expand into two split halves and/or a rotated whole (see
+/// [`spread::execute`]) *before* cropping — matching upstream's order,
+/// where spread detection runs on the original page and crop/resize apply
+/// independently to each resulting piece, not the other way around.
 ///
-/// Also not yet applied, tracked as a gap rather than silently skipped:
-/// rainbow-artifact removal, which exists only as a `todo!()` still. What
-/// *is* applied (spread, crop, inter-panel crop, gamma, autocontrast,
-/// resize, quantize) has its own fixture-backed tests in [`spread`],
-/// [`crate::crop`], [`crate::contrast`], [`crate::resize`], and
-/// [`crate::quantize`]; this function's job is only to wire already-
-/// validated pieces together in the right order, not to introduce new
-/// heuristics of its own.
+/// Every stage here has its own fixture-backed tests in [`spread`],
+/// [`crate::crop`], [`crate::contrast`], [`crate::resize`],
+/// [`crate::rainbow`], and [`crate::quantize`]; this function's job is only
+/// to wire already-validated pieces together in the right order, not to
+/// introduce new heuristics of its own.
 pub fn process_page(
     source_bytes: &[u8],
     options: &PipelineOptions,
@@ -173,6 +174,12 @@ fn finish_page(
         fill: 255,
     };
     let page = resize::resize_page(&page, &resize_options);
+
+    let page = if options.erase_rainbow {
+        crate::rainbow::erase_rainbow_artifacts_gray(&page)
+    } else {
+        page
+    };
 
     let mut bytes = Vec::new();
     let extension = if options.force_png {

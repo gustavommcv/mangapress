@@ -80,6 +80,11 @@ pub struct Cli {
     #[arg(long = "ipc", value_enum, default_value_t = InterPanelCrop::Disabled)]
     pub interpanelcrop: InterPanelCrop,
 
+    /// Erase rainbow effect on color e-ink screens by attenuating
+    /// interfering frequencies.
+    #[arg(long)]
+    pub eraserainbow: bool,
+
     /// Output format.
     #[arg(short, long, value_enum, default_value_t = Format::Epub)]
     pub format: Format,

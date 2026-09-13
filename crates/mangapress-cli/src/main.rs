@@ -110,6 +110,7 @@ fn main() -> anyhow::Result<()> {
         gamma: cli.gamma,
         autolevel: cli.autolevel,
         noautocontrast: cli.noautocontrast,
+        erase_rainbow: cli.eraserainbow,
     };
 
     let mut processed_chapters = Vec::with_capacity(source_chapters.len());

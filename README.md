@@ -64,6 +64,25 @@ an extensive test suite — see
 a rough edge. Everything is grayscale output today regardless of profile (see "Not yet in scope"
 above) — still pre-1.0.
 
+## Performance
+
+Page processing is parallelized across every CPU core (via [`rayon`](https://github.com/rayon-rs/rayon)),
+matching how upstream KCC fans work out across a `multiprocessing.Pool()` — mangapress just does it
+compiled instead of interpreted. Measured converting a real 182-page, 7-chapter volume
+(`--profile KV`, EPUB output) on a 6-core/12-thread AMD Ryzen 5 5600X, averaged over 3 runs each:
+
+| | mangapress v0.4.0 | KCC 11.2.0 |
+|---|---|---|
+| Wall time | **~2.8s** | ~5.0s |
+| Output | 186 pages, EPUB with a declared cover | 186 pages + a separate `cover.jpg`, same page content |
+
+Both tools crop/split/resize every page identically for this volume — verified by instrumenting a
+real KCC checkout to dump its own actual per-page decisions and diffing them against mangapress's,
+not just by comparing final file sizes. The extra file in KCC's output is a duplicate cover image;
+mangapress declares its EPUB cover by tagging the first page itself (`properties="cover-image"` in
+the manifest, plus the older `<meta name="cover">` convention), rather than writing a second copy of
+it the way KCC's own `cover.jpg` does.
+
 ## Install
 
 **macOS/Linux:**

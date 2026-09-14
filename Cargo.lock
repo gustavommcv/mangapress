@@ -1167,6 +1167,7 @@ dependencies = [
  "anyhow",
  "clap",
  "mangapress-core",
+ "rayon",
 ]
 
 [[package]]
@@ -1176,7 +1177,6 @@ dependencies = [
  "image",
  "imageproc",
  "printpdf",
- "rayon",
  "roxmltree",
  "rustfft",
  "slug",

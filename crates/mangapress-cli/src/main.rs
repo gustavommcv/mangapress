@@ -11,8 +11,10 @@ use mangapress_core::pipeline::{
     process_page, CroppingMode, OutputFormat, PipelineOptions, SplitterMode,
 };
 use mangapress_core::profile::Profile;
+use rayon::prelude::*;
 use std::io::{IsTerminal, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A resolved book title (from `--title`, `ComicInfo.xml`'s `Series`/`Title`,
 /// or the input filename) can contain characters that are illegal in a
@@ -322,23 +324,38 @@ fn main() -> anyhow::Result<()> {
     // chapter instead, so a log file doesn't fill up with carriage returns.
     let progress_is_tty = std::io::stderr().is_terminal();
 
+    // Pages within a chapter are independent of each other -- nothing about
+    // processing one depends on another -- so they're fanned out across
+    // every available core via rayon rather than one at a time, matching
+    // upstream KCC's own `multiprocessing.Pool()`-based fan-out. Order is
+    // still preserved: `par_iter().map().collect()` keeps results in the
+    // same order as the input regardless of which thread finished which
+    // page first.
     let mut processed_chapters = Vec::with_capacity(total_chapters);
     let mut page_count = 0usize;
-    let mut source_page_count = 0usize;
+    let done_page_count = AtomicUsize::new(0);
     for (chapter_index, chapter) in source_chapters.into_iter().enumerate() {
         let chapter_title = chapter.title.clone();
+        let outputs: Vec<Vec<(String, Vec<u8>)>> = chapter
+            .pages
+            .par_iter()
+            .map(|source_page| {
+                let outputs = process_page(&source_page.bytes, &pipeline_options)?;
+                let done = done_page_count.fetch_add(1, Ordering::Relaxed) + 1;
+                if !quiet && progress_is_tty {
+                    eprint!("\rprocessing page {done}/{total_pages}");
+                    std::io::stderr().flush().ok();
+                }
+                Ok(outputs)
+            })
+            .collect::<mangapress_core::Result<Vec<_>>>()
+            .with_context(|| format!("processing a page in chapter '{chapter_title}'"))?;
+
         let mut pages = Vec::with_capacity(chapter.pages.len());
-        for source_page in chapter.pages {
-            let outputs = process_page(&source_page.bytes, &pipeline_options)
-                .with_context(|| format!("processing a page in chapter '{chapter_title}'"))?;
-            for (extension, bytes) in outputs {
+        for page_outputs in outputs {
+            for (extension, bytes) in page_outputs {
                 pages.push(Page { extension, bytes });
                 page_count += 1;
-            }
-            source_page_count += 1;
-            if !quiet && progress_is_tty {
-                eprint!("\rprocessing page {source_page_count}/{total_pages}");
-                std::io::stderr().flush().ok();
             }
         }
         processed_chapters.push(Chapter {
@@ -348,8 +365,9 @@ fn main() -> anyhow::Result<()> {
         });
         if !quiet && !progress_is_tty {
             eprintln!(
-                "chapter {}/{total_chapters} done ({source_page_count}/{total_pages} pages so far)",
-                chapter_index + 1
+                "chapter {}/{total_chapters} done ({}/{total_pages} pages so far)",
+                chapter_index + 1,
+                done_page_count.load(Ordering::Relaxed)
             );
         }
     }

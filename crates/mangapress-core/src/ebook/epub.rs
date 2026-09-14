@@ -111,8 +111,19 @@ pub fn build_epub(chapters: &[Chapter], options: &EpubOptions) -> Result<Vec<u8>
             );
             zip_entries.push((format!("OEBPS/{xhtml_path}"), xhtml.into_bytes()));
 
+            // The book's very first page doubles as its cover: tagged
+            // `properties="cover-image"` (the EPUB3 way) and referenced by
+            // `<meta name="cover">` in the OPF metadata (the older EPUB2
+            // convention many readers still look for) — both point at this
+            // same image rather than duplicating it into a separate file
+            // the way upstream KCC's own `cover.jpg` does.
+            let cover_property = if page_counter == 1 {
+                r#" properties="cover-image""#
+            } else {
+                ""
+            };
             manifest_items.push(format!(
-                r#"<item id="img{page_counter}" href="{image_path}" media-type="{media_type}"/>"#
+                r#"<item id="img{page_counter}" href="{image_path}" media-type="{media_type}"{cover_property}/>"#
             ));
             manifest_items.push(format!(
                 r#"<item id="page{page_counter}" href="{xhtml_path}" media-type="application/xhtml+xml"/>"#
@@ -166,6 +177,7 @@ fn build_opf(
 <dc:creator>{author}</dc:creator>
 <dc:language>{lang}</dc:language>
 {description}<meta property="rendition:layout">pre-paginated</meta>
+<meta name="cover" content="img1"/>
 </metadata>
 <manifest>
 <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
@@ -423,6 +435,19 @@ mod tests {
             .unwrap();
         assert!(nav.contains("c001 - Title One"));
         assert!(nav.contains("c002 - Nyako&apos;s Whereabouts"));
+    }
+
+    #[test]
+    fn the_first_page_is_declared_as_the_book_cover() {
+        let bytes = build_epub(&sample_chapters(), &default_options()).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut opf = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("OEBPS/content.opf").unwrap(), &mut opf)
+            .unwrap();
+        assert!(opf.contains(r#"<meta name="cover" content="img1"/>"#));
+        assert!(opf.contains(r#"id="img1" href="Images/c0001/p0001.png" media-type="image/png" properties="cover-image"/>"#));
+        // No other page's manifest item should carry the cover property.
+        assert_eq!(opf.matches("cover-image").count(), 1);
     }
 
     #[test]

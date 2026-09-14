@@ -319,6 +319,24 @@ pub struct Binarized {
 /// (matches `page_number_crop_alg.py`'s own preprocessing), inter-panel
 /// cropping doesn't — it applies its own, distinct border exclusion instead
 /// (see [`inter_panel`]'s module docs).
+///
+/// Known, accepted residual: on a real 186-page volume with a mix of
+/// backgrounds, this function's own bbox already lands 1px off real KCC's
+/// (before any page-number-specific narrowing even runs) for one recurring
+/// page type — [`Background::Dark`] pages with dense text near an edge
+/// (e.g. a stylized chapter-title/credits illustration). Confirmed by
+/// diffing against a real KCC checkout instrumented to dump its own actual
+/// per-page bbox; every other page (179/186, including every other
+/// dark-background one) matches exactly. Not chased further: the boundary
+/// row a 1px bbox difference includes or excludes is by definition right at
+/// the edge between "content" and "background" already, the source image
+/// is downscaled to the target device resolution right after this anyway
+/// (diluting a 1px difference in an ~800px-tall source further still), and
+/// this page shape — dark background *and* dense text right at an edge —
+/// is rare outside of stylized splash pages, not the traditional
+/// white-background manga this project targets. Revisit only if it turns
+/// out to matter on real content, not as an exercise in exact parity for
+/// its own sake.
 pub fn binarize_for_crop(
     img: &GrayImage,
     power: f32,

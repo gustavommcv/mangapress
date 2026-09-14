@@ -1,8 +1,9 @@
 mod args;
+mod protocol;
 
 use anyhow::{bail, Context};
 use args::{Cli, Cropping, Format, InterPanelCrop, MetadataTitle, Splitter};
-use clap::Parser;
+use clap::{error::ErrorKind, Parser};
 use mangapress_core::archive::{cbz::extract_cbz, folder::read_folder, SourceEntry};
 use mangapress_core::ebook::{cbz_out, epub, group_into_chapters, pdf, Chapter, Page};
 use mangapress_core::manga::ReadingDirection;
@@ -11,10 +12,13 @@ use mangapress_core::pipeline::{
     process_page, CroppingMode, OutputFormat, PipelineOptions, SplitterMode,
 };
 use mangapress_core::profile::Profile;
+use protocol::{event_write_failure, EventSink, RunFailure};
 use rayon::prelude::*;
+use serde_json::json;
+use std::ffi::OsString;
 use std::io::{IsTerminal, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 /// A resolved book title (from `--title`, `ComicInfo.xml`'s `Series`/`Title`,
 /// or the input filename) can contain characters that are illegal in a
@@ -101,29 +105,74 @@ fn disambiguate_output_path(path: &Path) -> PathBuf {
     unreachable!()
 }
 
+fn absolute_display(path: &Path) -> String {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|current| current.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    }
+    .to_string_lossy()
+    .into_owned()
+}
+
+fn format_name(format: Format) -> &'static str {
+    match format {
+        Format::Epub => "epub",
+        Format::Cbz => "cbz",
+        Format::Pdf => "pdf",
+    }
+}
+
 /// Processes every page of one chapter, fanning the work out across every
 /// core (pages within a chapter don't depend on each other) while
 /// preserving input order in the returned `Vec` regardless of which thread
 /// finishes first -- `par_iter().map().collect()` guarantees this. Kept
-/// free of I/O so it's directly testable: `on_page_done` is the only way
-/// callers observe progress, called with a 1-based count of *source* pages
-/// completed so far in this call (not output pages -- one source page can
-/// expand into more than one, via a double-page-spread split), and may be
-/// called concurrently from any worker thread.
+/// directly testable: `on_page_done` is the only way callers observe
+/// progress. Callbacks are serialized in stable source-page order even when
+/// workers finish out of order; both arguments are one-based source-page
+/// positions (not output pages -- one source page can expand into more than
+/// one, via a double-page-spread split).
+#[derive(Debug)]
+struct PageProcessingFailure {
+    page: usize,
+    diagnostic: String,
+}
+
 fn process_chapter_pages(
     pages: &[Page],
     options: &PipelineOptions,
-    on_page_done: impl Fn(usize) + Sync,
-) -> mangapress_core::Result<Vec<Page>> {
-    let done = AtomicUsize::new(0);
+    on_page_done: impl Fn(usize, usize) -> std::io::Result<()> + Sync,
+) -> Result<Vec<Page>, PageProcessingFailure> {
+    let progress = Mutex::new((vec![false; pages.len()], 0usize));
     let outputs: Vec<Vec<(String, Vec<u8>)>> = pages
         .par_iter()
-        .map(|source_page| {
-            let result = process_page(&source_page.bytes, options)?;
-            on_page_done(done.fetch_add(1, Ordering::Relaxed) + 1);
+        .enumerate()
+        .map(|(page_index, source_page)| {
+            let page_number = page_index + 1;
+            let result = process_page(&source_page.bytes, options).map_err(|error| {
+                PageProcessingFailure {
+                    page: page_number,
+                    diagnostic: error.to_string(),
+                }
+            })?;
+            let mut progress = progress.lock().map_err(|_| PageProcessingFailure {
+                page: page_number,
+                diagnostic: "page progress lock was poisoned".to_string(),
+            })?;
+            progress.0[page_index] = true;
+            while progress.1 < progress.0.len() && progress.0[progress.1] {
+                progress.1 += 1;
+                let completed = progress.1;
+                on_page_done(completed, completed).map_err(|error| PageProcessingFailure {
+                    page: completed,
+                    diagnostic: format!("writing page progress: {error}"),
+                })?;
+            }
             Ok(result)
         })
-        .collect::<mangapress_core::Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>, PageProcessingFailure>>()?;
 
     let mut flattened = Vec::with_capacity(pages.len());
     for page_outputs in outputs {
@@ -135,34 +184,134 @@ fn process_chapter_pages(
 }
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let args: Vec<OsString> = std::env::args_os().collect();
+    let machine_requested = args
+        .iter()
+        .any(|arg| arg == "--json-events" || arg == "--protocol-version");
+    let events = EventSink::new(machine_requested, std::io::stdout());
+    let cli = match Cli::try_parse_from(args) {
+        Ok(cli) => cli,
+        Err(error) => {
+            if matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) {
+                error.exit();
+            }
+            if machine_requested {
+                let failure = RunFailure::new(
+                    "invalid_arguments",
+                    "configuration",
+                    true,
+                    "The command-line arguments are invalid.",
+                    error.to_string(),
+                );
+                events.emit_failure(&failure).map_err(event_write_failure)?;
+            }
+            error.exit();
+        }
+    };
 
+    if cli.protocol_version {
+        events
+            .emit(
+                "protocol",
+                json!({
+                    "capabilities": ["events", "profiles"],
+                }),
+            )
+            .map_err(event_write_failure)?;
+        return Ok(());
+    }
+
+    let mut failure = RunFailure::new(
+        "conversion_failed",
+        "conversion",
+        false,
+        "The conversion couldn't be completed.",
+        "conversion failed",
+    );
+    let result = run(cli, &events, &mut failure);
+    if let Err(error) = &result {
+        if let Some(protocol_failure) = error.downcast_ref::<RunFailure>() {
+            failure = protocol_failure.clone();
+        } else {
+            failure.diagnostic = format!("{error:#}");
+        }
+        if events.enabled() {
+            events.emit_failure(&failure).map_err(event_write_failure)?;
+        }
+    }
+    result
+}
+
+fn run<W: std::io::Write + Send>(
+    cli: Cli,
+    events: &EventSink<W>,
+    failure: &mut RunFailure,
+) -> anyhow::Result<()> {
     if cli.list_profiles {
         // `writeln!` + break-on-error, not `println!`, because `println!`
         // panics on a write failure -- including the very ordinary
         // `mangapress --list-profiles | head` closing its end of the pipe
         // early. Piping a listing into `head`/`grep`/`less` should just
         // stop quietly, like it does for any real Unix tool.
-        let mut stdout = std::io::stdout().lock();
-        for p in mangapress_core::profile::PROFILES {
-            if writeln!(
-                stdout,
-                "{:<10} {:<40} {}x{}",
-                p.code, p.display_name, p.width, p.height
-            )
-            .is_err()
-            {
-                break;
+        if events.enabled() {
+            for profile in mangapress_core::profile::PROFILES {
+                events
+                    .emit(
+                        "profile",
+                        json!({
+                            "code": profile.code,
+                            "name": profile.display_name,
+                            "width": profile.width,
+                            "height": profile.height,
+                            "gray_levels": profile.palette.levels(),
+                            "family": format!("{:?}", profile.family()).to_ascii_lowercase(),
+                        }),
+                    )
+                    .map_err(event_write_failure)?;
+            }
+            events
+                .emit(
+                    "result",
+                    json!({
+                        "status": "completed",
+                        "operation": "list_profiles",
+                        "profile_count": mangapress_core::profile::PROFILES.len(),
+                    }),
+                )
+                .map_err(event_write_failure)?;
+        } else {
+            let mut stdout = std::io::stdout().lock();
+            for p in mangapress_core::profile::PROFILES {
+                if writeln!(
+                    stdout,
+                    "{:<10} {:<40} {}x{}",
+                    p.code, p.display_name, p.width, p.height
+                )
+                .is_err()
+                {
+                    break;
+                }
             }
         }
         return Ok(());
     }
-    let quiet = cli.quiet;
+    let quiet = cli.quiet || events.enabled();
     // Guaranteed present: clap's `required_unless_present` on `--list-profiles`
     // means we only get here when `input` was actually passed.
-    let input = cli.input.expect("input is required unless --list-profiles");
+    let input = cli
+        .input
+        .clone()
+        .expect("input is required unless --list-profiles or --protocol-version");
+    let input_path = absolute_display(&input);
 
-    let profile = Profile::by_code(&cli.profile).with_context(|| {
+    *failure = RunFailure::new(
+        "unknown_profile",
+        "configuration",
+        true,
+        format!("Unknown device profile '{}'.", cli.profile),
         match Profile::closest_code(&cli.profile) {
             Some(suggestion) => format!(
                 "unknown device profile '{}' -- did you mean '{suggestion}'? (see --list-profiles)",
@@ -172,15 +321,34 @@ fn main() -> anyhow::Result<()> {
                 "unknown device profile '{}' (see --list-profiles)",
                 cli.profile
             ),
-        }
-    })?;
+        },
+    );
+    let profile = Profile::by_code(&cli.profile).context(failure.diagnostic.clone())?;
 
     if !input.exists() {
+        *failure = RunFailure::new(
+            "input_not_found",
+            "inspect",
+            true,
+            "The input path does not exist.",
+            format!("input path does not exist: {}", input.display()),
+        )
+        .with_path(input_path.clone());
         bail!("input path does not exist: {}", input.display());
     }
 
     let (width, height) = profile.effective_resolution(cli.customwidth, cli.customheight);
     if width == 0 || height == 0 {
+        *failure = RunFailure::new(
+            "invalid_resolution",
+            "configuration",
+            true,
+            "Set both a target width and height for this device profile.",
+            format!(
+                "resolved target resolution is {width}x{height} — profile '{}' has no built-in resolution, pass both --customwidth and --customheight to set one",
+                cli.profile
+            ),
+        );
         bail!(
             "resolved target resolution is {width}x{height} — profile '{}' has no built-in \
              resolution, pass both --customwidth and --customheight to set one",
@@ -193,6 +361,17 @@ fn main() -> anyhow::Result<()> {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Untitled".to_string());
 
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "inspect",
+                "state": "started",
+                "path": input_path.clone(),
+            }),
+        )
+        .map_err(event_write_failure)?;
+
     if !quiet {
         eprintln!(
             "mangapress: converting '{}' for {} ({width}x{height}, {} gray levels), manga_style={}, format={:?}",
@@ -204,6 +383,14 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    *failure = RunFailure::new(
+        "input_read_failed",
+        "inspect",
+        true,
+        "Couldn't read pages from the input.",
+        format!("reading input from {}", input.display()),
+    )
+    .with_path(input_path.clone());
     let mut source_entries: Vec<SourceEntry> = if input.is_dir() {
         read_folder(&input)
     } else {
@@ -212,10 +399,36 @@ fn main() -> anyhow::Result<()> {
     .with_context(|| format!("reading input from {}", input.display()))?;
 
     if source_entries.is_empty() {
+        *failure = RunFailure::new(
+            "input_empty",
+            "inspect",
+            true,
+            "The input contains no files.",
+            format!("no files found in {}", input.display()),
+        )
+        .with_path(input_path.clone());
         bail!("no files found in {}", input.display());
     }
 
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "metadata",
+                "state": "started",
+                "path": input_path.clone(),
+            }),
+        )
+        .map_err(event_write_failure)?;
     let comic_info_xml = metadata::extract_comic_info_entry(&mut source_entries);
+    *failure = RunFailure::new(
+        "metadata_parse_failed",
+        "metadata",
+        true,
+        "Couldn't read ComicInfo.xml metadata from the input.",
+        format!("parsing ComicInfo.xml from {}", input.display()),
+    )
+    .with_path(input_path.clone());
     let comic_info = comic_info_xml
         .as_deref()
         .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
@@ -224,18 +437,6 @@ fn main() -> anyhow::Result<()> {
         .with_context(|| format!("parsing ComicInfo.xml from {}", input.display()))?;
     if comic_info.is_some() && !quiet {
         eprintln!("found ComicInfo.xml");
-    }
-
-    let (source_entries, skipped_non_images) =
-        mangapress_core::archive::filter_image_entries(source_entries);
-    if skipped_non_images > 0 {
-        eprintln!(
-            "warning: skipped {skipped_non_images} non-image file(s) in the input (not a \
-             recognized image extension)"
-        );
-    }
-    if source_entries.is_empty() {
-        bail!("no recognized page images found in {}", input.display());
     }
 
     let resolved = metadata::resolve(
@@ -251,6 +452,59 @@ fn main() -> anyhow::Result<()> {
     );
     let title = resolved.title;
     let author = resolved.authors.join(", ");
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "metadata",
+                "state": "completed",
+                "manga": title.clone(),
+                "title": title.clone(),
+                "author": author.clone(),
+                "comic_info_found": comic_info.is_some(),
+            }),
+        )
+        .map_err(event_write_failure)?;
+
+    let (source_entries, skipped_non_images) =
+        mangapress_core::archive::filter_image_entries(source_entries);
+    if skipped_non_images > 0 {
+        let message = format!(
+            "Skipped {skipped_non_images} non-image file(s) because their extensions aren't recognized."
+        );
+        if events.enabled() {
+            events
+                .emit(
+                    "warning",
+                    json!({
+                        "severity": "warning",
+                        "code": "skipped_non_images",
+                        "stage": "inspect",
+                        "path": input_path.clone(),
+                        "recoverable": true,
+                        "message": message,
+                        "count": skipped_non_images,
+                    }),
+                )
+                .map_err(event_write_failure)?;
+        } else {
+            eprintln!(
+                "warning: skipped {skipped_non_images} non-image file(s) in the input (not a \
+                 recognized image extension)"
+            );
+        }
+    }
+    if source_entries.is_empty() {
+        *failure = RunFailure::new(
+            "no_page_images",
+            "inspect",
+            true,
+            "The input contains no recognized page images.",
+            format!("no recognized page images found in {}", input.display()),
+        )
+        .with_path(input_path.clone());
+        bail!("no recognized page images found in {}", input.display());
+    }
 
     let source_chapters = group_into_chapters(source_entries);
     let total_chapters = source_chapters.len();
@@ -258,12 +512,30 @@ fn main() -> anyhow::Result<()> {
     if !quiet {
         eprintln!("found {total_chapters} chapter(s), {total_pages} page(s) total");
     }
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "inspect",
+                "state": "completed",
+                "manga": title.clone(),
+                "chapters": total_chapters,
+                "pages": total_pages,
+            }),
+        )
+        .map_err(event_write_failure)?;
 
-    let extension = match cli.format {
-        Format::Epub => "epub",
-        Format::Cbz => "cbz",
-        Format::Pdf => "pdf",
-    };
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "plan",
+                "state": "started",
+                "manga": title.clone(),
+            }),
+        )
+        .map_err(event_write_failure)?;
+    let extension = format_name(cli.format);
     let output_path = match &cli.output {
         Some(path) if path.is_dir() => {
             path.join(format!("{}.{extension}", sanitize_filename(&title)))
@@ -274,6 +546,15 @@ fn main() -> anyhow::Result<()> {
             // hypothetical path is computed; the real create happens below,
             // once dry-run has already returned.
             if !cli.dry_run {
+                *failure = RunFailure::new(
+                    "output_directory_create_failed",
+                    "write",
+                    true,
+                    "Couldn't create the selected output folder.",
+                    format!("creating output directory {}", path.display()),
+                )
+                .with_manga(title.clone())
+                .with_path(absolute_display(path));
                 std::fs::create_dir_all(path)
                     .with_context(|| format!("creating output directory {}", path.display()))?;
             }
@@ -287,23 +568,83 @@ fn main() -> anyhow::Result<()> {
     // source file being read.
     let output_path = if same_file(&input, &output_path) {
         let disambiguated = disambiguate_output_path(&output_path);
-        eprintln!(
-            "warning: output would overwrite the input file; writing to {} instead",
-            disambiguated.display()
-        );
+        if events.enabled() {
+            events
+                .emit(
+                    "warning",
+                    json!({
+                        "severity": "warning",
+                        "code": "output_collision",
+                        "stage": "plan",
+                        "manga": title.clone(),
+                        "path": absolute_display(&disambiguated),
+                        "recoverable": true,
+                        "message": "The requested output would overwrite the input, so a safe alternate filename will be used.",
+                    }),
+                )
+                .map_err(event_write_failure)?;
+        } else {
+            eprintln!(
+                "warning: output would overwrite the input file; writing to {} instead",
+                disambiguated.display()
+            );
+        }
         disambiguated
     } else {
         output_path
     };
+    let output_path_absolute = absolute_display(&output_path);
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "plan",
+                "state": "completed",
+                "manga": title.clone(),
+                "output_path": output_path_absolute.clone(),
+                "format": extension,
+                "profile": profile.code,
+                "device": profile.display_name,
+                "width": width,
+                "height": height,
+                "gray_levels": profile.palette.levels(),
+                "chapters": total_chapters,
+                "pages": total_pages,
+            }),
+        )
+        .map_err(event_write_failure)?;
 
     if cli.dry_run {
-        println!("dry run -- no pages will be processed, nothing will be written");
-        println!("title: {title}");
-        println!("author: {author}");
-        println!("format: {:?}", cli.format);
-        println!("device: {} ({width}x{height})", profile.display_name);
-        println!("chapters: {total_chapters}, pages: {total_pages}");
-        println!("would write: {}", output_path.display());
+        if events.enabled() {
+            events
+                .emit(
+                    "result",
+                    json!({
+                        "status": "completed",
+                        "operation": "convert",
+                        "dry_run": true,
+                        "manga": title,
+                        "author": author,
+                        "format": extension,
+                        "profile": profile.code,
+                        "width": width,
+                        "height": height,
+                        "chapters": total_chapters,
+                        "source_pages": total_pages,
+                        "output_path": output_path_absolute,
+                        "written": false,
+                    }),
+                )
+                .map_err(event_write_failure)?;
+        } else {
+            println!("dry run -- no pages will be processed, nothing will be written");
+            println!("title: {title}");
+            println!("author: {author}");
+            println!("format: {:?}", cli.format);
+            println!("device: {} ({width}x{height})", profile.display_name);
+            println!("chapters: {total_chapters}, pages: {total_pages}");
+            println!("would write: {}", output_path.display());
+        }
         return Ok(());
     }
 
@@ -355,7 +696,19 @@ fn main() -> anyhow::Result<()> {
     // Interactive terminals get a live per-page counter (overwritten in
     // place via `\r`); redirected/piped output gets one plain line per
     // chapter instead, so a log file doesn't fill up with carriage returns.
-    let progress_is_tty = std::io::stderr().is_terminal();
+    let progress_is_tty = !events.enabled() && std::io::stderr().is_terminal();
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "process",
+                "state": "started",
+                "manga": title.clone(),
+                "chapters": total_chapters,
+                "pages": total_pages,
+            }),
+        )
+        .map_err(event_write_failure)?;
 
     // Pages within a chapter are independent of each other -- nothing about
     // processing one depends on another -- so they're fanned out across
@@ -368,17 +721,91 @@ fn main() -> anyhow::Result<()> {
     for (chapter_index, chapter) in source_chapters.into_iter().enumerate() {
         let chapter_title = chapter.title.clone();
         let chapter_source_len = chapter.pages.len();
-        let pages = process_chapter_pages(&chapter.pages, &pipeline_options, |done_in_chapter| {
-            if !quiet && progress_is_tty {
+        events
+            .emit(
+                "chapter",
+                json!({
+                    "state": "started",
+                    "stage": "process",
+                    "manga": title.clone(),
+                    "chapter": chapter_title.clone(),
+                    "chapter_index": chapter_index + 1,
+                    "chapter_count": total_chapters,
+                    "source_pages": chapter_source_len,
+                }),
+            )
+            .map_err(event_write_failure)?;
+        let pages = match process_chapter_pages(
+            &chapter.pages,
+            &pipeline_options,
+            |done_in_chapter, page_number| {
                 let done = source_pages_done + done_in_chapter;
-                eprint!("\rprocessing page {done}/{total_pages}");
-                std::io::stderr().flush().ok();
+                if events.enabled() {
+                    events.emit(
+                        "page",
+                        json!({
+                            "state": "completed",
+                            "stage": "process",
+                            "manga": title.clone(),
+                            "chapter": chapter_title.clone(),
+                            "chapter_index": chapter_index + 1,
+                            "page": page_number,
+                            "completed": done,
+                            "total": total_pages,
+                        }),
+                    )?;
+                } else if !quiet && progress_is_tty {
+                    eprint!("\rprocessing page {done}/{total_pages}");
+                    std::io::stderr().flush().ok();
+                }
+                Ok(())
+            },
+        ) {
+            Ok(pages) => pages,
+            Err(error) => {
+                *failure = RunFailure::new(
+                    "page_processing_failed",
+                    "process",
+                    true,
+                    format!(
+                        "Couldn't process page {} in chapter '{}'.",
+                        error.page, chapter_title
+                    ),
+                    format!(
+                        "processing page {} in chapter '{}': {}",
+                        error.page, chapter_title, error.diagnostic
+                    ),
+                )
+                .with_manga(title.clone())
+                .with_chapter(chapter_title.clone())
+                .with_page(error.page)
+                .with_path(input_path.clone());
+                bail!(
+                    "processing a page in chapter '{chapter_title}': {}",
+                    error.diagnostic
+                );
             }
-        })
-        .with_context(|| format!("processing a page in chapter '{chapter_title}'"))?;
+        };
 
         page_count += pages.len();
         source_pages_done += chapter_source_len;
+        events
+            .emit(
+                "chapter",
+                json!({
+                    "state": "completed",
+                    "stage": "process",
+                    "manga": title.clone(),
+                    "chapter": chapter_title,
+                    "chapter_index": chapter_index + 1,
+                    "chapter_count": total_chapters,
+                    "source_pages": chapter_source_len,
+                    "output_pages": pages.len(),
+                    "completed": source_pages_done,
+                    "total": total_pages,
+                }),
+            )
+            .map_err(event_write_failure)?;
         processed_chapters.push(Chapter {
             relative_path: chapter.relative_path,
             title: chapter.title,
@@ -397,13 +824,49 @@ fn main() -> anyhow::Result<()> {
         }
         eprintln!("processed {page_count} page(s)");
     }
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "process",
+                "state": "completed",
+                "manga": title.clone(),
+                "source_pages": total_pages,
+                "output_pages": page_count,
+            }),
+        )
+        .map_err(event_write_failure)?;
 
-    let output_bytes = match cli.format {
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "package",
+                "state": "started",
+                "manga": title.clone(),
+                "format": extension,
+            }),
+        )
+        .map_err(event_write_failure)?;
+    *failure = RunFailure::new(
+        "book_build_failed",
+        "package",
+        false,
+        format!(
+            "Couldn't assemble the {} book.",
+            extension.to_ascii_uppercase()
+        ),
+        format!("building {extension} output"),
+    )
+    .with_manga(title.clone())
+    .with_path(output_path_absolute.clone());
+    let result_author = author.clone();
+    let output_result = match cli.format {
         Format::Epub => epub::build_epub(
             &processed_chapters,
             &epub::EpubOptions {
                 title: title.clone(),
-                author,
+                author: author.clone(),
                 language: cli.language.clone(),
                 reading_direction: ReadingDirection {
                     right_to_left: cli.manga_style,
@@ -426,7 +889,40 @@ fn main() -> anyhow::Result<()> {
             },
         )?,
     };
+    let output_bytes = output_result;
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "package",
+                "state": "completed",
+                "manga": title.clone(),
+                "format": extension,
+                "bytes": output_bytes.len(),
+            }),
+        )
+        .map_err(event_write_failure)?;
 
+    *failure = RunFailure::new(
+        "output_write_failed",
+        "write",
+        true,
+        "Couldn't save the converted book.",
+        format!("writing output to {}", output_path.display()),
+    )
+    .with_manga(title.clone())
+    .with_path(output_path_absolute.clone());
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "write",
+                "state": "started",
+                "manga": title.clone(),
+                "path": output_path_absolute.clone(),
+            }),
+        )
+        .map_err(event_write_failure)?;
     std::fs::write(&output_path, &output_bytes)
         .with_context(|| format!("writing output to {}", output_path.display()))?;
     if !quiet {
@@ -436,6 +932,40 @@ fn main() -> anyhow::Result<()> {
             output_bytes.len()
         );
     }
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "write",
+                "state": "completed",
+                "manga": title.clone(),
+                "path": output_path_absolute.clone(),
+                "bytes": output_bytes.len(),
+            }),
+        )
+        .map_err(event_write_failure)?;
+    events
+        .emit(
+            "result",
+            json!({
+                "status": "completed",
+                "operation": "convert",
+                "dry_run": false,
+                "manga": title,
+                "author": result_author,
+                "format": extension,
+                "profile": profile.code,
+                "width": width,
+                "height": height,
+                "chapters": total_chapters,
+                "source_pages": total_pages,
+                "output_pages": page_count,
+                "output_path": output_path_absolute,
+                "bytes": output_bytes.len(),
+                "written": true,
+            }),
+        )
+        .map_err(event_write_failure)?;
 
     Ok(())
 }
@@ -581,7 +1111,7 @@ mod tests {
             .collect();
 
         let options = minimal_pipeline_options();
-        let processed = process_chapter_pages(&pages, &options, |_| {}).unwrap();
+        let processed = process_chapter_pages(&pages, &options, |_, _| Ok(())).unwrap();
         assert_eq!(processed.len(), gray_levels.len());
 
         let output_grays: Vec<u8> = processed
@@ -601,7 +1131,7 @@ mod tests {
     }
 
     #[test]
-    fn process_chapter_pages_calls_the_progress_callback_once_per_source_page() {
+    fn process_chapter_pages_reports_each_source_page_in_stable_order() {
         let pages: Vec<Page> = (0..6)
             .map(|_| Page {
                 extension: "png".to_string(),
@@ -611,13 +1141,15 @@ mod tests {
         let options = minimal_pipeline_options();
 
         let calls = std::sync::Mutex::new(Vec::new());
-        process_chapter_pages(&pages, &options, |done| {
-            calls.lock().unwrap().push(done);
+        process_chapter_pages(&pages, &options, |done, page| {
+            calls.lock().unwrap().push((done, page));
+            Ok(())
         })
         .unwrap();
 
-        let mut calls = calls.into_inner().unwrap();
-        calls.sort_unstable();
-        assert_eq!(calls, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(
+            calls.into_inner().unwrap(),
+            vec![(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6)]
+        );
     }
 }

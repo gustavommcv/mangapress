@@ -16,6 +16,8 @@ mangapress-core = { path = "../mangapress-core" }
 clap = { workspace = true }
 anyhow = { workspace = true }
 rayon = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 image = { workspace = true }
+tempfile = { workspace = true }

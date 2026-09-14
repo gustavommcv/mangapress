@@ -10,3 +10,4 @@
 8. [MOBI/AZW3 is permanently out of scope](0008-mobi-azw3-permanently-out-of-scope.md)
 9. [Adopt relevant CLI conventions from clig.dev](0009-cli-conventions.md)
 10. [Defer color (`--forcecolor`) output](0010-color-output-deferred.md)
+11. [Add a versioned JSON Lines event stream](0011-versioned-json-lines-events.md)

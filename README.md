@@ -154,6 +154,23 @@ Run `mangapress --help` for the full list, including cropping-aggressiveness tun
 `--stretch`, `--wallpaper`, `--whiteborders`), and metadata overrides (`--title`, `--author`,
 `--metadatatitle`, `--language`).
 
+### Machine-readable integration
+
+`--json-events` emits a versioned JSON Lines stream containing stage, chapter, source-page,
+warning, error, and result events. It is an additional mode; ordinary terminal output is unchanged
+when the flag is absent:
+
+```bash
+mangapress volume.cbz --profile KV --output volume.epub --json-events
+mangapress volume.cbz --profile KV --output volume.epub --dry-run --json-events
+```
+
+Device profiles are available as structured events with `--list-profiles --json-events`.
+`mangapress --protocol-version` returns the compatibility handshake used by GUI consumers. See the
+[machine protocol v1 specification](docs/machine-protocol-v1.md) and
+[ADR 0011](docs/adr/0011-versioned-json-lines-events.md). Consumers must check `protocol_version`
+rather than infer compatibility from the release version.
+
 ## Relationship to upstream KCC
 
 KCC is used as a reference/specification, not a source to copy from wholesale — see

@@ -15,8 +15,8 @@ use std::path::PathBuf;
 )]
 pub struct Cli {
     /// Path to a `.cbz` file or a folder of chapter subfolders/images.
-    /// Required unless --list-profiles is passed.
-    #[arg(required_unless_present = "list_profiles")]
+    /// Required unless --list-profiles or --protocol-version is passed.
+    #[arg(required_unless_present_any = ["list_profiles", "protocol_version"])]
     pub input: Option<PathBuf>,
 
     /// Device profile (e.g. KV, KPW5, KoAO, Rmk2, OTHER). Run
@@ -28,6 +28,15 @@ pub struct Cli {
     /// resolution, then exit.
     #[arg(long)]
     pub list_profiles: bool,
+
+    /// Emit a versioned JSON Lines event stream on stdout instead of
+    /// human-readable progress output.
+    #[arg(long)]
+    pub json_events: bool,
+
+    /// Print machine-protocol compatibility information as JSON and exit.
+    #[arg(long)]
+    pub protocol_version: bool,
 
     /// Show what would be produced (chapters, pages, resolved metadata,
     /// output path) without processing any pages or writing anything.

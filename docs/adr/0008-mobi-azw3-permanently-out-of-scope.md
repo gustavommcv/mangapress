@@ -8,7 +8,7 @@ Accepted. Supersedes [0006-mobi-azw3-deferred.md](0006-mobi-azw3-deferred.md).
 
 ADR 0006 deferred MOBI/AZW3 as a "not implemented yet" gap, mainly for
 lack-of-crate/effort reasons. Revisiting it: the project's actual reading
-pipeline (see the top-level `README.md`) is HakuNeko → Mangabind →
+pipeline (see the top-level `README.md`) is raw chapters → Mangabind →
 mangapress → **KOReader**, not a physical Kindle running its own firmware.
 KOReader already reads fixed-layout EPUB well, which is why EPUB was
 already the project's stated priority output format — MOBI/AZW3 only ever

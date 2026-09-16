@@ -10,7 +10,7 @@ Rust rewrite of [KCC (Kindle Comic Converter)](https://github.com/ciromattia/kcc
 pipeline, distributed as a single static binary.
 
 ```
-HakuNeko (downloads chapter by chapter)
+Raw chapters (folder or .cbz per chapter)
     -> Mangabind (groups chapters into per-volume .cbz)
     -> mangapress (crops/resizes/optimizes for e-ink, writes EPUB/CBZ/PDF)
     -> KOReader / Kindle / Kobo / reMarkable
@@ -40,8 +40,7 @@ copied.
 already reads fixed-layout EPUB well — see
 [docs/adr/0008-mobi-azw3-permanently-out-of-scope.md](docs/adr/0008-mobi-azw3-permanently-out-of-scope.md).
 mangapress also doesn't download or organize chapters — that's
-[HakuNeko](https://github.com/manga-download/hakuneko)'s and
-[Mangabind](https://github.com/gustavommcv/mangabind)'s job, respectively; mangapress only ever
+[Mangabind](https://github.com/gustavommcv/mangabind)'s job; mangapress only ever
 reads a finished `.cbz`/folder and writes a converted book.
 
 **Not yet in scope:** color output. Every page is converted to grayscale, even on the

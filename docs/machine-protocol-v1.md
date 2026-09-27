@@ -17,7 +17,8 @@ event has:
 mangapress --protocol-version
 ```
 
-returns one `protocol` event whose `capabilities` are `events` and `profiles`. Mangabound must
+returns one `protocol` event whose `capabilities` are `events`, `profiles`, and `nested_toc` (see
+[ADR 0012](adr/0012-nested-toc-for-combined-volumes.md)). Mangabound must
 require an exact supported protocol version and separately verify the release version and checksum.
 
 ## Conversion stream

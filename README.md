@@ -147,6 +147,12 @@ A few of the more commonly used flags:
   everything still converts to grayscale regardless of this flag or `--profile` (see "Not yet in
   scope" above).
 - `--keepcomicinfo` — carry the source's `ComicInfo.xml` through into `.cbz` output.
+- `--nested-toc` — build a two-level table of contents (a volume entry, its chapters nested
+  underneath) instead of the usual flat, one-entry-per-chapter list. For an input whose chapter
+  folders are themselves nested one level under a volume folder — what
+  [Mangabind](https://github.com/gustavommcv/mangabind)'s `-combine` mode produces. EPUB output
+  only for now; combined with `--format cbz` or `--format pdf` it's refused with a clear error. See
+  [docs/adr/0012-nested-toc-for-combined-volumes.md](docs/adr/0012-nested-toc-for-combined-volumes.md).
 
 Run `mangapress --help` for the full list, including cropping-aggressiveness tuning
 (`--croppingpower`, `--croppingminimum`, `--preservemargin`), resize behavior (`--upscale`,

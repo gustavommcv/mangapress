@@ -65,6 +65,7 @@ fn builds_a_valid_epub_from_a_real_mangabind_cbz() {
             right_to_left: true,
         },
         description: None,
+        nested_toc: false,
     };
 
     let epub_bytes = build_epub(&chapters, &options).expect("building the EPUB should succeed");

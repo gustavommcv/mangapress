@@ -217,7 +217,7 @@ fn main() -> anyhow::Result<()> {
             .emit(
                 "protocol",
                 json!({
-                    "capabilities": ["events", "profiles"],
+                    "capabilities": ["events", "profiles", "nested_toc"],
                 }),
             )
             .map_err(event_write_failure)?;
@@ -353,6 +353,24 @@ fn run<W: std::io::Write + Send>(
             "resolved target resolution is {width}x{height} — profile '{}' has no built-in \
              resolution, pass both --customwidth and --customheight to set one",
             cli.profile
+        );
+    }
+
+    if cli.nested_toc && cli.format != Format::Epub {
+        *failure = RunFailure::new(
+            "nested_toc_unsupported_format",
+            "configuration",
+            true,
+            "A two-level table of contents is only available for EPUB output right now.",
+            format!(
+                "--nested-toc was combined with --format {:?}, which has no chapter/volume table of \
+                 contents mechanism yet — see docs/adr/0012-nested-toc-for-combined-volumes.md",
+                cli.format
+            ),
+        );
+        bail!(
+            "--nested-toc requires --format epub, got --format {:?}",
+            cli.format
         );
     }
 
@@ -872,6 +890,7 @@ fn run<W: std::io::Write + Send>(
                     right_to_left: cli.manga_style,
                 },
                 description: resolved.summary,
+                nested_toc: cli.nested_toc,
             },
         )?,
         Format::Cbz => {

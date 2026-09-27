@@ -57,7 +57,7 @@ fn protocol_handshake_is_one_versioned_json_line() {
     assert_eq!(events[0]["type"], "protocol");
     assert_eq!(
         events[0]["capabilities"],
-        serde_json::json!(["events", "profiles"])
+        serde_json::json!(["events", "profiles", "nested_toc"])
     );
 }
 
@@ -221,6 +221,126 @@ fn a_page_failure_has_chapter_page_stage_and_actionable_message() {
         error["message"],
         "Couldn't process page 1 in chapter 'c001 - Broken'."
     );
+}
+
+#[test]
+fn nested_toc_with_a_non_epub_format_is_refused() {
+    let fixture = fixture_folder();
+    let output_dir = tempfile::tempdir().expect("create output folder");
+
+    let output = Command::new(binary())
+        .arg(fixture.path())
+        .args([
+            "--profile",
+            "KV",
+            "--format",
+            "cbz",
+            "--nested-toc",
+            "--json-events",
+            "--output",
+        ])
+        .arg(output_dir.path().join("converted.cbz"))
+        .output()
+        .expect("run mangapress");
+    assert_eq!(output.status.code(), Some(1));
+
+    let events = parse_events(&output);
+    let error = events.last().unwrap();
+    assert_eq!(error["type"], "error");
+    assert_eq!(error["code"], "nested_toc_unsupported_format");
+    assert_eq!(error["stage"], "configuration");
+    assert_eq!(error["recoverable"], true);
+}
+
+#[test]
+fn nested_toc_epub_produces_a_two_level_table_of_contents() {
+    // What Mangabind's -combine mode actually produces: a volume directory
+    // wrapping ordinary chapter directories - see
+    // docs/adr/0012-nested-toc-for-combined-volumes.md.
+    let fixture = tempfile::tempdir().expect("create fixture folder");
+    for (volume, chapter, pages) in [
+        ("v001 - Vol.01", "c001 - One", [32u8, 64u8]),
+        ("v001 - Vol.01", "c002 - Two", [96, 128]),
+        ("v002 - Vol.02", "c001 - Three", [160, 192]),
+    ] {
+        let chapter_path = fixture.path().join(volume).join(chapter);
+        std::fs::create_dir_all(&chapter_path).expect("create chapter");
+        for (index, gray) in pages.into_iter().enumerate() {
+            write_png(&chapter_path.join(format!("p{:04}.png", index + 1)), gray);
+        }
+    }
+
+    let output_dir = tempfile::tempdir().expect("create output folder");
+    let output_path = output_dir.path().join("converted.epub");
+
+    let output = Command::new(binary())
+        .arg(fixture.path())
+        .args([
+            "--profile",
+            "KV",
+            "--cropping",
+            "disabled",
+            "--noautocontrast",
+            "--nested-toc",
+            "--output",
+        ])
+        .arg(&output_path)
+        .output()
+        .expect("run mangapress");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let epub_bytes = std::fs::read(&output_path).expect("read produced epub");
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(epub_bytes)).expect("open epub as zip");
+    let mut ncx = String::new();
+    std::io::Read::read_to_string(&mut archive.by_name("OEBPS/toc.ncx").unwrap(), &mut ncx)
+        .expect("read toc.ncx");
+
+    let doc = roxmltree::Document::parse(&ncx).expect("toc.ncx must be well-formed XML");
+    let nav_map = doc
+        .descendants()
+        .find(|n| n.has_tag_name("navMap"))
+        .expect("navMap element");
+    let top_level_nav_points: Vec<_> = nav_map
+        .children()
+        .filter(|n| n.has_tag_name("navPoint"))
+        .collect();
+    assert_eq!(
+        top_level_nav_points.len(),
+        2,
+        "two volumes at the top level, not three flat chapters"
+    );
+
+    let volume_titles: Vec<String> = top_level_nav_points
+        .iter()
+        .map(|v| {
+            v.descendants()
+                .find(|n| n.has_tag_name("text"))
+                .and_then(|t| t.text())
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(volume_titles, vec!["v001 - Vol.01", "v002 - Vol.02"]);
+
+    let volume1_children: Vec<_> = top_level_nav_points[0]
+        .children()
+        .filter(|n| n.has_tag_name("navPoint"))
+        .collect();
+    assert_eq!(
+        volume1_children.len(),
+        2,
+        "volume 1's two chapters must be nested directly inside its own navPoint"
+    );
+    let volume2_children: Vec<_> = top_level_nav_points[1]
+        .children()
+        .filter(|n| n.has_tag_name("navPoint"))
+        .collect();
+    assert_eq!(volume2_children.len(), 1);
 }
 
 #[test]

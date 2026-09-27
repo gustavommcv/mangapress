@@ -167,6 +167,14 @@ pub struct Cli {
     /// Replace the screen height provided by the device profile.
     #[arg(long)]
     pub customheight: Option<u32>,
+
+    /// Expect the input's chapter folders to be nested one level deeper
+    /// under a volume folder (Volume/Chapter/pages - what Mangabind's
+    /// `-combine` mode produces) and build a two-level table of contents:
+    /// a volume entry, its chapters nested underneath. EPUB output only for
+    /// now; combining this with --format cbz or --format pdf is refused.
+    #[arg(long)]
+    pub nested_toc: bool,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]

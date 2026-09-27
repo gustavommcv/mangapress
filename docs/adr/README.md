@@ -11,3 +11,4 @@
 9. [Adopt relevant CLI conventions from clig.dev](0009-cli-conventions.md)
 10. [Defer color (`--forcecolor`) output](0010-color-output-deferred.md)
 11. [Add a versioned JSON Lines event stream](0011-versioned-json-lines-events.md)
+12. [A two-level table of contents for a combined series, EPUB only](0012-nested-toc-for-combined-volumes.md)

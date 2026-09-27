@@ -1191,8 +1191,10 @@ dependencies = [
  "image",
  "mangapress-core",
  "rayon",
+ "roxmltree",
  "serde_json",
  "tempfile",
+ "zip",
 ]
 
 [[package]]

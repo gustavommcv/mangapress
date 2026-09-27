@@ -38,6 +38,14 @@ pub struct EpubOptions {
     pub reading_direction: ReadingDirection,
     /// `ComicInfo.xml`'s `Summary`, if any (see [`crate::metadata`]).
     pub description: Option<String>,
+    /// Expect each [`Chapter`]'s `relative_path` to carry one more directory
+    /// level above it (a volume) and build a two-level `toc.ncx`/`nav.xhtml`
+    /// (a volume entry as parent, its chapters nested underneath) instead of
+    /// today's flat, one-entry-per-chapter list. Mangabind's `-combine` mode
+    /// is the one producer of this shape today; see
+    /// `docs/adr/0012-nested-toc-for-combined-volumes.md`. False leaves
+    /// every existing input and output byte-for-byte unchanged.
+    pub nested_toc: bool,
 }
 
 pub fn build_epub(chapters: &[Chapter], options: &EpubOptions) -> Result<Vec<u8>> {
@@ -240,19 +248,49 @@ fn build_ncx(
     chapters: &[&Chapter],
     chapter_hrefs: &[String],
 ) -> String {
-    let nav_points: String = chapters
-        .iter()
-        .zip(chapter_hrefs)
-        .enumerate()
-        .map(|(i, (chapter, href))| {
-            format!(
-                r#"<navPoint id="chapter{order}" playOrder="{order}"><navLabel><text>{title}</text></navLabel><content src="{href}"/></navPoint>"#,
-                order = i + 1,
-                title = xml_escape(&chapter.title),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let mut order = 0usize;
+    let nav_points: String = if options.nested_toc {
+        group_by_volume(chapters, chapter_hrefs)
+            .into_iter()
+            .map(|volume| {
+                order += 1;
+                let volume_order = order;
+                let children: String = volume
+                    .chapters
+                    .iter()
+                    .map(|(chapter, href)| {
+                        order += 1;
+                        format!(
+                            r#"<navPoint id="chapter{order}" playOrder="{order}"><navLabel><text>{title}</text></navLabel><content src="{href}"/></navPoint>"#,
+                            title = xml_escape(&chapter.title),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!(
+                    r#"<navPoint id="volume{volume_order}" playOrder="{volume_order}"><navLabel><text>{title}</text></navLabel><content src="{href}"/>
+{children}
+</navPoint>"#,
+                    title = xml_escape(&volume.title),
+                    href = volume.chapters[0].1,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        chapters
+            .iter()
+            .zip(chapter_hrefs)
+            .map(|(chapter, href)| {
+                order += 1;
+                format!(
+                    r#"<navPoint id="chapter{order}" playOrder="{order}"><navLabel><text>{title}</text></navLabel><content src="{href}"/></navPoint>"#,
+                    title = xml_escape(&chapter.title),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -275,17 +313,44 @@ fn build_ncx(
 }
 
 fn build_nav(options: &EpubOptions, chapters: &[&Chapter], chapter_hrefs: &[String]) -> String {
-    let items: String = chapters
-        .iter()
-        .zip(chapter_hrefs)
-        .map(|(chapter, href)| {
-            format!(
-                r#"<li><a href="{href}">{title}</a></li>"#,
-                title = xml_escape(&chapter.title),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let items: String = if options.nested_toc {
+        group_by_volume(chapters, chapter_hrefs)
+            .into_iter()
+            .map(|volume| {
+                let children: String = volume
+                    .chapters
+                    .iter()
+                    .map(|(chapter, href)| {
+                        format!(
+                            r#"<li><a href="{href}">{title}</a></li>"#,
+                            title = xml_escape(&chapter.title),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!(
+                    r#"<li><a href="{href}">{title}</a><ol>
+{children}
+</ol></li>"#,
+                    title = xml_escape(&volume.title),
+                    href = volume.chapters[0].1,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        chapters
+            .iter()
+            .zip(chapter_hrefs)
+            .map(|(chapter, href)| {
+                format!(
+                    r#"<li><a href="{href}">{title}</a></li>"#,
+                    title = xml_escape(&chapter.title),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
 
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
@@ -305,6 +370,52 @@ fn build_nav(options: &EpubOptions, chapters: &[&Chapter], chapter_hrefs: &[Stri
 </html>"#,
         title = xml_escape(&options.title),
     )
+}
+
+/// One volume's worth of already-flat chapters, grouped for `nested_toc`
+/// output only. Built purely from each [`Chapter`]'s existing
+/// `relative_path` - its parent-of-parent directory is the volume, matching
+/// how Mangabind's `-combine` mode nests `<volume dir>/<chapter dir>/...`
+/// (see `docs/adr/0005-mangabind-contract.md` for why chapters are already
+/// grouped by full path, and `docs/adr/0012-nested-toc-for-combined-volumes.md`
+/// for this one more level). No change to [`super::group_into_chapters`] or
+/// the [`Chapter`] type itself was needed for this.
+struct VolumeGroup<'a> {
+    title: String,
+    chapters: Vec<(&'a Chapter, &'a String)>,
+}
+
+fn group_by_volume<'a>(
+    chapters: &[&'a Chapter],
+    chapter_hrefs: &'a [String],
+) -> Vec<VolumeGroup<'a>> {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_volume: std::collections::HashMap<String, Vec<(&Chapter, &String)>> =
+        std::collections::HashMap::new();
+
+    for (chapter, href) in chapters.iter().zip(chapter_hrefs) {
+        let volume_title = chapter
+            .relative_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Untitled".to_string());
+        if !by_volume.contains_key(&volume_title) {
+            order.push(volume_title.clone());
+        }
+        by_volume
+            .entry(volume_title)
+            .or_default()
+            .push((*chapter, href));
+    }
+
+    order
+        .into_iter()
+        .map(|title| {
+            let chapters = by_volume.remove(&title).expect("just inserted above");
+            VolumeGroup { title, chapters }
+        })
+        .collect()
 }
 
 fn media_type_for_extension(ext: &str) -> Option<&'static str> {
@@ -389,6 +500,7 @@ mod tests {
                 right_to_left: true,
             },
             description: None,
+            nested_toc: false,
         }
     }
 
@@ -488,6 +600,104 @@ mod tests {
         assert_eq!(
             xml_escape("A & B <C> \"D\" 'E'"),
             "A &amp; B &lt;C&gt; &quot;D&quot; &apos;E&apos;"
+        );
+    }
+
+    /// A chapter, keyed by a two-level "<volume>/<chapter>" relative path -
+    /// what group_into_chapters produces from a Mangabind `-combine` output
+    /// (see docs/adr/0012-nested-toc-for-combined-volumes.md). The chapter's
+    /// own title is just its own directory name, matching the real pipeline
+    /// (group_into_chapters titles a chapter from relative_path.file_name(),
+    /// never the full path).
+    fn nested_chapter(volume: &str, chapter_dir: &str) -> Chapter {
+        Chapter {
+            relative_path: PathBuf::from(volume).join(chapter_dir),
+            title: chapter_dir.to_string(),
+            pages: vec![Page {
+                extension: "png".to_string(),
+                bytes: tiny_png(),
+            }],
+        }
+    }
+
+    fn nested_sample_chapters() -> Vec<Chapter> {
+        vec![
+            nested_chapter("v001 - Vol.01", "c001 - Alpha"),
+            nested_chapter("v001 - Vol.01", "c002 - Beta"),
+            nested_chapter("v002 - Vol.02", "c001 - Gamma"),
+        ]
+    }
+
+    #[test]
+    fn nested_toc_groups_chapters_under_their_volume() {
+        let mut options = default_options();
+        options.nested_toc = true;
+        let bytes = build_epub(&nested_sample_chapters(), &options).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+
+        let mut ncx = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("OEBPS/toc.ncx").unwrap(), &mut ncx)
+            .unwrap();
+        // Two volumes at the top level, three chapters total nested inside them.
+        assert_eq!(ncx.matches("<navPoint id=\"volume").count(), 2);
+        assert_eq!(ncx.matches("<navPoint id=\"chapter").count(), 3);
+        assert!(ncx.contains("v001 - Vol.01"));
+        assert!(ncx.contains("v002 - Vol.02"));
+        assert!(ncx.contains("c001 - Alpha"));
+        assert!(ncx.contains("c002 - Beta"));
+        assert!(ncx.contains("c001 - Gamma"));
+        // Volume 1's navPoint must actually contain (not just precede) its
+        // two chapters' navPoints - this is the real regression this
+        // feature is for, not just "every label shows up somewhere". Ids
+        // aren't sequential per type (volume1, volume2, ...): playOrder is
+        // one shared, strictly sequential counter across every navPoint,
+        // parent and child alike, as NCX requires - so the second volume's
+        // id is whatever order it lands on, not necessarily "volume2".
+        let volume_starts: Vec<usize> = ncx
+            .match_indices("<navPoint id=\"volume")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(volume_starts.len(), 2);
+        let volume1_block = &ncx[volume_starts[0]..volume_starts[1]];
+        assert!(volume1_block.contains("c001 - Alpha"));
+        assert!(volume1_block.contains("c002 - Beta"));
+        assert!(
+            !volume1_block.contains("c001 - Gamma"),
+            "volume 1's chapters must not include volume 2's"
+        );
+
+        let mut nav = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("OEBPS/nav.xhtml").unwrap(), &mut nav)
+            .unwrap();
+        // A nested <ol> inside a volume's own <li> is what gives KOReader (and
+        // any EPUB3-nav-aware reader) an expandable volume/chapter tree: the
+        // one outer <ol> (the whole TOC) plus one more per volume.
+        assert_eq!(
+            nav.matches("<ol>").count(),
+            3,
+            "the outer <ol> plus one nested <ol> per volume"
+        );
+        assert!(nav.contains("v001 - Vol.01"));
+        assert!(nav.contains("v002 - Vol.02"));
+    }
+
+    #[test]
+    fn nested_toc_false_stays_flat_even_with_nested_relative_paths() {
+        // Proves nested_toc is a strict opt-in: chapters that happen to have
+        // a nested relative_path (for whatever reason) still produce today's
+        // plain flat list when the flag is off, matching existing behavior
+        // byte-for-byte for anyone not using Mangabind's -combine output.
+        let bytes = build_epub(&nested_sample_chapters(), &default_options()).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+
+        let mut ncx = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("OEBPS/toc.ncx").unwrap(), &mut ncx)
+            .unwrap();
+        assert_eq!(ncx.matches("<navPoint id=\"chapter").count(), 3);
+        assert_eq!(
+            ncx.matches("<navPoint id=\"volume").count(),
+            0,
+            "no volume grouping when nested_toc is off"
         );
     }
 }

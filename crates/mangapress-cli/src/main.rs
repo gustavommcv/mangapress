@@ -608,16 +608,85 @@ fn run<W: std::io::Write + Send>(
         bail!("no recognized page images found in {}", input.display());
     }
 
+    // Upstream's two warnings about what it was given. Neither stops the run.
+    let device = profile.effective_resolution(cli.customwidth, cli.customheight);
+    let (smaller, measured) =
+        mangapress_core::archive::smaller_than_device(&source_entries, device);
+    let mut input_warnings: Vec<(&str, String)> = Vec::new();
+    if mangapress_core::archive::looks_already_converted(&source_entries) {
+        input_warnings.push((
+            "source_already_converted",
+            "These pages look like KCC already converted them. Converting them again will lower their quality.".to_string(),
+        ));
+    }
+    // Upstream leaves Kindle Scribe profiles out of this one: their screens
+    // are larger than most scans.
+    if smaller * 4 > measured
+        && !cli.upscale
+        && !cli.stretch
+        && !cli.webtoon
+        && !profile.code.starts_with("KS")
+    {
+        input_warnings.push((
+            "images_smaller_than_device",
+            format!(
+                "{smaller} of {measured} pages are smaller than the device's {}x{} screen. Consider --upscale (or --stretch) to make them easier to read.",
+                device.0, device.1
+            ),
+        ));
+    }
+    for (code, message) in input_warnings {
+        if events.enabled() {
+            events
+                .emit(
+                    "warning",
+                    json!({
+                        "severity": "warning",
+                        "code": code,
+                        "stage": "inspect",
+                        "path": input_path.clone(),
+                        "recoverable": true,
+                        "message": message,
+                    }),
+                )
+                .map_err(event_write_failure)?;
+        } else {
+            eprintln!("warning: {message}");
+        }
+    }
+
+    // A cover of the user's own choosing, read now so that a bad path fails
+    // before any page is processed.
+    let custom_cover: Option<Vec<u8>> = match &cli.cover {
+        Some(path) => match std::fs::read(path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) => {
+                *failure = RunFailure::new(
+                    "cover_read_failed",
+                    "inspect",
+                    true,
+                    "Couldn't read the cover image.",
+                    format!("reading cover image {}: {error}", path.display()),
+                )
+                .with_path(absolute_display(path));
+                bail!("reading cover image {}: {error}", path.display());
+            }
+        },
+        None => None,
+    };
+
     let source_chapters = group_into_chapters(source_entries);
     // The cover is made from the book's first image as it came, apart from
     // whatever page processing does to that image later.
     // Webtoon mode has no separate cover upstream (its first image is a
     // strip, not a cover); the first cut page stands in for one.
-    let cover_source: Option<Vec<u8>> = source_chapters
-        .iter()
-        .find_map(|chapter| chapter.pages.first())
-        .filter(|_| !cli.webtoon)
-        .map(|page| page.bytes.clone());
+    let cover_source: Option<Vec<u8>> = custom_cover.clone().or_else(|| {
+        source_chapters
+            .iter()
+            .find_map(|chapter| chapter.pages.first())
+            .filter(|_| !cli.webtoon)
+            .map(|page| page.bytes.clone())
+    });
     let total_chapters = source_chapters.len();
     let total_pages: usize = source_chapters.iter().map(|c| c.pages.len()).sum();
     if !quiet {
@@ -1048,6 +1117,40 @@ fn run<W: std::io::Write + Send>(
     .with_manga(title.clone())
     .with_path(output_path_absolute.clone());
     let result_author = author.clone();
+    // The cover, and whether upstream would also put it in a CBZ: only when
+    // it is not simply the first page (the user's own, or smart-cropped).
+    let cover: Option<(Vec<u8>, bool)> = match cover_source.as_deref() {
+        Some(source) if cli.format != Format::Pdf => {
+            match cover::build_cover_reporting(
+                source,
+                &cover::CoverOptions {
+                    target: pipeline_options.target_resolution(),
+                    right_to_left: cli.manga_style && !cli.webtoon,
+                    smart_crop: cli.smartcovercrop,
+                    fill: cli.coverfill,
+                    force_color: cli.forcecolor,
+                    jpeg_quality: cli
+                        .jpeg_quality
+                        .unwrap_or_else(|| default_jpeg_quality(profile)),
+                },
+            ) {
+                Ok(cover) => Some(cover),
+                Err(error) => {
+                    *failure = RunFailure::new(
+                        "cover_build_failed",
+                        "package",
+                        true,
+                        "Couldn't make the cover from that image.",
+                        format!("building the cover: {error}"),
+                    )
+                    .with_manga(title.clone());
+                    bail!("building the cover: {error}");
+                }
+            }
+        }
+        _ => None,
+    };
+
     let output_result = match cli.format {
         Format::Auto => unreachable!("--format auto was resolved above"),
         Format::Epub => epub::build_epub(
@@ -1073,24 +1176,7 @@ fn run<W: std::io::Write + Send>(
                 invert_direction: cli.invertdirection,
                 spread_shift: cli.spreadshift,
                 one_page_landscape: cli.onepagelandscape,
-                cover: cover_source
-                    .as_deref()
-                    .map(|source| {
-                        cover::build_cover(
-                            source,
-                            &cover::CoverOptions {
-                                target: pipeline_options.target_resolution(),
-                                right_to_left: cli.manga_style,
-                                smart_crop: cli.smartcovercrop,
-                                fill: cli.coverfill,
-                                force_color: cli.forcecolor,
-                                jpeg_quality: cli
-                                    .jpeg_quality
-                                    .unwrap_or_else(|| default_jpeg_quality(profile)),
-                            },
-                        )
-                    })
-                    .transpose()?,
+                cover: cover.as_ref().map(|(bytes, _)| bytes.clone()),
                 bookmarks: comic_info
                     .as_ref()
                     .map(|info| info.bookmarks.clone())
@@ -1104,7 +1190,11 @@ fn run<W: std::io::Write + Send>(
                 .keepcomicinfo
                 .then_some(comic_info_xml.as_deref())
                 .flatten();
-            cbz_out::build_cbz(&processed_chapters, keep_xml)?
+            let cbz_cover = cover
+                .as_ref()
+                .filter(|(_, smart_cropped)| custom_cover.is_some() || *smart_cropped)
+                .map(|(bytes, _)| bytes.as_slice());
+            cbz_out::build_cbz(&processed_chapters, keep_xml, cbz_cover)?
         }
         Format::Pdf => pdf::build_pdf(
             &processed_chapters,

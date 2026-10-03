@@ -51,6 +51,17 @@ pub struct CoverOptions {
 /// The cover for a book whose first source image is `source_bytes`, encoded
 /// as JPEG — grayscale, or in the image's own colors with `force_color`.
 pub fn build_cover(source_bytes: &[u8], options: &CoverOptions) -> Result<Vec<u8>> {
+    build_cover_reporting(source_bytes, options).map(|(bytes, _)| bytes)
+}
+
+/// [`build_cover`], also saying whether `smart_crop` actually cut a front
+/// cover out of the image (it leaves one that is not wider than tall
+/// alone). Upstream puts a smart-cropped cover into a CBZ as well, as its
+/// first image.
+pub fn build_cover_reporting(
+    source_bytes: &[u8],
+    options: &CoverOptions,
+) -> Result<(Vec<u8>, bool)> {
     let source = image::load_from_memory(source_bytes)?.to_rgb8();
     let stretched = crate::contrast::autocontrast_preserving_tone(&source);
     if options.force_color {
@@ -68,7 +79,8 @@ fn finish_cover<P: image::Pixel<Subpixel = u8> + 'static>(
     cover: Buffer<P>,
     color_type: ExtendedColorType,
     options: &CoverOptions,
-) -> Result<Vec<u8>> {
+) -> Result<(Vec<u8>, bool)> {
+    let smart_cropped = options.smart_crop && cover.width() > cover.height();
     let cover = if options.smart_crop {
         crop_main_cover(cover, options.right_to_left)
     } else {
@@ -88,7 +100,7 @@ fn finish_cover<P: image::Pixel<Subpixel = u8> + 'static>(
     let mut bytes = Vec::new();
     JpegEncoder::new_with_quality(&mut std::io::Cursor::new(&mut bytes), options.jpeg_quality)
         .write_image(cover.as_raw(), cover.width(), cover.height(), color_type)?;
-    Ok(bytes)
+    Ok((bytes, smart_cropped))
 }
 
 /// `crop_main_cover()`: the front cover's place in a wide first image, by

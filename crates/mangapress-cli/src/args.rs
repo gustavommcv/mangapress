@@ -173,6 +173,12 @@ pub struct Cli {
     #[arg(long)]
     pub nokepub: bool,
 
+    /// Use this image as the book's cover instead of the first page. It is
+    /// processed like any cover (contrast, grayscale unless --forcecolor,
+    /// fitted to the device) and, in a CBZ, stored as the first image.
+    #[arg(long)]
+    pub cover: Option<PathBuf>,
+
     /// Cut the front cover out of a wide first image (a jacket or spread
     /// scan) for the book's cover, instead of using the whole image.
     #[arg(long)]

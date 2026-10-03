@@ -14,8 +14,22 @@ use crate::error::{Error, Result};
 /// (unmodified — upstream doesn't rewrite it to reflect the resize either)
 /// at the root of the output CBZ. `None` when the source had no
 /// `ComicInfo.xml` or `--keepcomicinfo` wasn't requested.
-pub fn build_cbz(chapters: &[Chapter], comic_info_xml: Option<&[u8]>) -> Result<Vec<u8>> {
+///
+/// `cover`, when given, goes in as `##cover.jpg` at the root — upstream's
+/// name for it, chosen to sort ahead of every page so that readers show it
+/// first. Upstream only adds one when the cover is not simply the first
+/// page: a cover the user supplied, or one smart-cropped out of a wide
+/// image.
+pub fn build_cbz(
+    chapters: &[Chapter],
+    comic_info_xml: Option<&[u8]>,
+    cover: Option<&[u8]>,
+) -> Result<Vec<u8>> {
     let mut entries = Vec::new();
+
+    if let Some(cover) = cover {
+        entries.push(("##cover.jpg".to_string(), cover.to_vec()));
+    }
 
     if let Some(xml) = comic_info_xml {
         entries.push(("ComicInfo.xml".to_string(), xml.to_vec()));
@@ -45,7 +59,8 @@ pub fn build_cbz(chapters: &[Chapter], comic_info_xml: Option<&[u8]>) -> Result<
         }
     }
 
-    if entries.is_empty() || (entries.len() == 1 && comic_info_xml.is_some()) {
+    let extras = comic_info_xml.is_some() as usize + cover.is_some() as usize;
+    if entries.len() == extras {
         return Err(Error::EmptyBook);
     }
 
@@ -74,14 +89,14 @@ mod tests {
 
     #[test]
     fn empty_chapters_are_rejected() {
-        assert!(matches!(build_cbz(&[], None), Err(Error::EmptyBook)));
+        assert!(matches!(build_cbz(&[], None, None), Err(Error::EmptyBook)));
     }
 
     #[test]
     fn empty_chapters_with_comicinfo_are_still_rejected() {
         // A lone ComicInfo.xml with no actual pages isn't a book.
         assert!(matches!(
-            build_cbz(&[], Some(b"<ComicInfo/>")),
+            build_cbz(&[], Some(b"<ComicInfo/>"), None),
             Err(Error::EmptyBook)
         ));
     }
@@ -89,7 +104,7 @@ mod tests {
     #[test]
     fn builds_one_folder_per_chapter() {
         let chapters = vec![chapter("c001 - One", 2), chapter("c002 - Two", 1)];
-        let bytes = build_cbz(&chapters, None).unwrap();
+        let bytes = build_cbz(&chapters, None, None).unwrap();
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         let names: Vec<String> = (0..archive.len())
             .map(|i| archive.by_index(i).unwrap().name().to_string())
@@ -110,7 +125,7 @@ mod tests {
         // "Extras" -- the first keeps the plain name, the second must not
         // collide with it in the output zip.
         let chapters = vec![chapter("Extras", 1), chapter("Extras", 1)];
-        let bytes = build_cbz(&chapters, None).unwrap();
+        let bytes = build_cbz(&chapters, None, None).unwrap();
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         let names: Vec<String> = (0..archive.len())
             .map(|i| archive.by_index(i).unwrap().name().to_string())
@@ -121,7 +136,7 @@ mod tests {
     #[test]
     fn slashes_in_titles_are_sanitized() {
         let chapters = vec![chapter("c001 - A/B", 1)];
-        let bytes = build_cbz(&chapters, None).unwrap();
+        let bytes = build_cbz(&chapters, None, None).unwrap();
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         assert_eq!(archive.by_index(0).unwrap().name(), "c001 - A-B/p0001.jpg");
     }
@@ -132,6 +147,7 @@ mod tests {
         let bytes = build_cbz(
             &chapters,
             Some(b"<ComicInfo><Series>Test</Series></ComicInfo>"),
+            None,
         )
         .unwrap();
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
@@ -143,5 +159,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!(contents, "<ComicInfo><Series>Test</Series></ComicInfo>");
+    }
+
+    #[test]
+    fn a_cover_is_stored_under_upstreams_name_ahead_of_every_page() {
+        let chapters = vec![Chapter {
+            relative_path: PathBuf::from("c001"),
+            title: "c001".to_string(),
+            pages: vec![Page {
+                extension: "jpg".to_string(),
+                bytes: vec![1, 2, 3],
+                ..Default::default()
+            }],
+        }];
+        let bytes = build_cbz(&chapters, None, Some(b"cover bytes")).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut names: Vec<String> = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names[0], "##cover.jpg");
+        assert_eq!(names.len(), 2);
+
+        // A cover alone is still an empty book.
+        assert!(matches!(
+            build_cbz(&[], None, Some(b"cover bytes")),
+            Err(Error::EmptyBook)
+        ));
     }
 }

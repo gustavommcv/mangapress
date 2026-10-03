@@ -76,10 +76,15 @@ Version 1 issue codes are:
 | `input_empty` | `inspect` | The input contains no files |
 | `skipped_non_images` | `inspect` | Non-image entries were ignored |
 | `no_page_images` | `inspect` | No recognized image entries remain |
+| `source_already_converted` | `inspect` | The pages carry KCC's own file names; converting again loses quality |
+| `images_smaller_than_device` | `inspect` | Over a quarter of the pages are smaller than the screen and nothing enlarges them |
+| `cover_read_failed` | `inspect` | The `--cover` image could not be read |
 | `metadata_parse_failed` | `metadata` | ComicInfo.xml is invalid or unreadable |
 | `output_collision` | `plan` | The chosen output would overwrite the input; a safe name is used |
 | `output_directory_create_failed` | `write` | The output directory could not be created |
 | `page_processing_failed` | `process` | A named page in a named chapter failed conversion |
+| `webtoon_split_failed` | `process` | A chapter's strips could not be cut into pages |
+| `cover_build_failed` | `package` | The cover could not be made from its image |
 | `book_build_failed` | `package` | EPUB, CBZ, or PDF assembly failed |
 | `output_write_failed` | `write` | The completed bytes could not be saved |
 | `event_write_failed` | `protocol` | The JSON Lines stream itself could not be written |

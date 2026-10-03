@@ -196,6 +196,62 @@ fn execution_streams_ordered_chapter_and_page_progress_then_writes() {
 }
 
 #[test]
+fn a_kobo_book_is_named_kepub_and_still_reported_as_epub() {
+    let input = fixture_folder();
+    let output_dir = tempfile::tempdir().expect("create output folder");
+    for dry_run in [true, false] {
+        let mut command = Command::new(binary());
+        command
+            .arg(input.path())
+            .args(["--profile", "KoC", "--format", "epub", "--output"])
+            .arg(output_dir.path())
+            .arg("--json-events");
+        if dry_run {
+            command.arg("--dry-run");
+        }
+        let output = command.output().expect("run mangapress");
+        assert!(output.status.success());
+
+        let events = parse_events(&output);
+        // Every event that names a format names the format, not the file's
+        // extension: consumers validate it against epub, cbz and pdf.
+        for event in events.iter().filter(|event| !event["format"].is_null()) {
+            assert_eq!(event["format"], "epub", "{event}");
+        }
+        let result = events.last().unwrap();
+        assert_eq!(result["type"], "result");
+        assert_eq!(result["format"], "epub");
+        let path = result["output_path"].as_str().unwrap();
+        assert!(path.ends_with(".kepub.epub"), "{path}");
+        assert_eq!(PathBuf::from(path).exists(), !dry_run);
+    }
+
+    // With --nokepub the name is a plain .epub, and the format the same.
+    let output = Command::new(binary())
+        .arg(input.path())
+        .args([
+            "--profile",
+            "KoC",
+            "--format",
+            "epub",
+            "--nokepub",
+            "--output",
+        ])
+        .arg(output_dir.path())
+        .args(["--json-events", "--dry-run"])
+        .output()
+        .expect("run mangapress");
+    let events = parse_events(&output);
+    let result = events.last().unwrap();
+    assert_eq!(result["format"], "epub");
+    let path = result["output_path"].as_str().unwrap();
+    assert!(
+        path.ends_with(".epub") && !path.ends_with(".kepub.epub"),
+        "{path}"
+    );
+}
+
+#[test]
 fn a_page_failure_has_chapter_page_stage_and_actionable_message() {
     let fixture = tempfile::tempdir().expect("create fixture folder");
     let chapter = fixture.path().join("c001 - Broken");

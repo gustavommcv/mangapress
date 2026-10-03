@@ -30,6 +30,8 @@ fn main() {
             .find_map(|a| a.strip_prefix(name).and_then(|rest| rest.strip_prefix('=')))
     };
 
+    let number = |name: &str| value(name).map(|v| v.parse::<f32>().expect("a number"));
+
     let webtoon = flag("--webtoon");
     let options = PipelineOptions {
         profile: Profile::by_code(profile).expect("a known profile code"),
@@ -42,9 +44,9 @@ fn main() {
             Some("margins") => CroppingMode::Margins,
             _ => CroppingMode::MarginsAndPageNumbers,
         },
-        cropping_power: 1.0,
-        cropping_minimum: 0.0,
-        preserve_margin_percent: 0.0,
+        cropping_power: number("--croppingpower").unwrap_or(1.0),
+        cropping_minimum: number("--croppingminimum").unwrap_or(0.0),
+        preserve_margin_percent: number("--preservemargin").unwrap_or(0.0),
         inter_panel_crop: match value("--ipc") {
             Some("horizontal") => InterPanelMode::Horizontal,
             Some("both") => InterPanelMode::Both,
@@ -57,7 +59,7 @@ fn main() {
         },
         upscale: flag("--upscale") && !webtoon,
         stretch: flag("--stretch"),
-        wallpaper: false,
+        wallpaper: flag("--wallpaper"),
         white_borders: flag("--whiteborders") || webtoon,
         black_borders: flag("--blackborders") && !webtoon,
         rotate_right: flag("--rotateright"),

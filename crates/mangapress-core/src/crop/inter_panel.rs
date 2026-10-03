@@ -58,8 +58,27 @@ pub fn crop_empty_inter_panel_sections(
     if mode == InterPanelMode::Disabled {
         return page;
     }
+    let proxy = page.clone();
+    crop_empty_inter_panel_sections_using(page, &proxy, mode, background)
+}
 
-    let binarized = binarize_for_crop(&page, CROP_POWER, background, false).binary;
+/// The same crop for a page of any pixel type, with the gutters found on
+/// `proxy` — the page's own grayscale, same dimensions — and removed from
+/// `page`. This is the split upstream makes too: it looks for empty sections
+/// on a grayscale copy and deletes those rows and columns from the original
+/// pixels. The pipeline calls this while the page is still RGB (see
+/// [`crate::pipeline::process_page`]).
+pub fn crop_empty_inter_panel_sections_using<P: image::Pixel + 'static>(
+    page: image::ImageBuffer<P, Vec<P::Subpixel>>,
+    proxy: &GrayImage,
+    mode: InterPanelMode,
+    background: Background,
+) -> image::ImageBuffer<P, Vec<P::Subpixel>> {
+    if mode == InterPanelMode::Disabled {
+        return page;
+    }
+
+    let binarized = binarize_for_crop(proxy, CROP_POWER, background, false).binary;
 
     let rows_to_remove = empty_sections(&binarized, true);
     let cols_to_remove = if mode == InterPanelMode::Both {
@@ -131,7 +150,11 @@ fn empty_sections(binarized: &GrayImage, horizontal: bool) -> Vec<u32> {
 
 /// `np.delete(img_mat, idx, axis)` for both axes at once: builds a new
 /// image containing only the rows/columns *not* marked for removal.
-fn delete_rows_and_cols(img: &GrayImage, rows: &[u32], cols: &[u32]) -> GrayImage {
+fn delete_rows_and_cols<P: image::Pixel + 'static>(
+    img: &image::ImageBuffer<P, Vec<P::Subpixel>>,
+    rows: &[u32],
+    cols: &[u32],
+) -> image::ImageBuffer<P, Vec<P::Subpixel>> {
     let (w, h) = img.dimensions();
     let rows_set: HashSet<u32> = rows.iter().copied().collect();
     let cols_set: HashSet<u32> = cols.iter().copied().collect();
@@ -145,7 +168,7 @@ fn delete_rows_and_cols(img: &GrayImage, rows: &[u32], cols: &[u32]) -> GrayImag
         return img.clone();
     }
 
-    GrayImage::from_fn(kept_cols.len() as u32, kept_rows.len() as u32, |x, y| {
+    image::ImageBuffer::from_fn(kept_cols.len() as u32, kept_rows.len() as u32, |x, y| {
         *img.get_pixel(kept_cols[x as usize], kept_rows[y as usize])
     })
 }

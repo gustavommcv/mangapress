@@ -75,25 +75,73 @@ pub fn erase_rainbow_artifacts_gray(page: &GrayImage) -> GrayImage {
         return page.clone();
     }
 
-    let mut spectrum: Vec<Complex32> = page
-        .pixels()
-        .map(|p| Complex32::new(p[0] as f32, 0.0))
+    let clean = clean_plane(page.pixels().map(|p| p[0] as f32), w as usize, h as usize);
+    GrayImage::from_fn(w, h, |x, y| {
+        let idx = (y as usize) * (w as usize) + (x as usize);
+        Luma([clean[idx].clamp(0.0, 255.0) as u8])
+    })
+}
+
+/// The same filtering for a page kept in color: upstream converts it to
+/// YUV with its own fixed matrices (not Pillow's YCbCr), cleans the
+/// luminance plane alone, and rebuilds RGB from the cleaned luminance and
+/// the untouched chrominance.
+pub fn erase_rainbow_artifacts_rgb(page: &image::RgbImage) -> image::RgbImage {
+    let (w, h) = page.dimensions();
+    if w <= 1 || h <= 1 {
+        return page.clone();
+    }
+
+    let yuv: Vec<[f64; 3]> = page
+        .as_raw()
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&[r, g, b]| {
+            let (r, g, b) = (r as f64, g as f64, b as f64);
+            [
+                0.299 * r + 0.587 * g + 0.114 * b,
+                -0.14713 * r - 0.28886 * g + 0.436 * b,
+                0.615 * r - 0.51499 * g - 0.10001 * b,
+            ]
+        })
         .collect();
+    let clean = clean_plane(yuv.iter().map(|p| p[0] as f32), w as usize, h as usize);
+
+    let mut out = page.clone();
+    for ((sample, &[_, u, v]), &luminance) in out
+        .as_mut()
+        .as_chunks_mut::<3>()
+        .0
+        .iter_mut()
+        .zip(&yuv)
+        .zip(&clean)
+    {
+        let y = luminance.clamp(0.0, 255.0) as f64;
+        *sample = [
+            (y + 1.13983 * v).clamp(0.0, 255.0) as u8,
+            (y - 0.39465 * u - 0.58060 * v).clamp(0.0, 255.0) as u8,
+            (y + 2.03211 * u).clamp(0.0, 255.0) as u8,
+        ];
+    }
+    out
+}
+
+/// One plane through the filter: forward transform, attenuation of the
+/// diagonal frequencies, inverse transform. Returns the reconstructed
+/// values, not yet clamped to 0..=255.
+fn clean_plane(values: impl Iterator<Item = f32>, w: usize, h: usize) -> Vec<f32> {
+    let mut spectrum: Vec<Complex32> = values.map(|v| Complex32::new(v, 0.0)).collect();
 
     PLANNER.with(|planner| {
         let mut planner = planner.borrow_mut();
-        fft_2d(&mut spectrum, w as usize, h as usize, &mut planner, false);
-        attenuate_diagonal_frequencies(&mut spectrum, w as usize, h as usize);
-        fft_2d(&mut spectrum, w as usize, h as usize, &mut planner, true);
+        fft_2d(&mut spectrum, w, h, &mut planner, false);
+        attenuate_diagonal_frequencies(&mut spectrum, w, h);
+        fft_2d(&mut spectrum, w, h, &mut planner, true);
     });
 
     let scale = 1.0 / (w as f32 * h as f32);
-
-    GrayImage::from_fn(w, h, |x, y| {
-        let idx = (y as usize) * (w as usize) + (x as usize);
-        let value = (spectrum[idx].re * scale).clamp(0.0, 255.0);
-        Luma([value as u8])
-    })
+    spectrum.into_iter().map(|c| c.re * scale).collect()
 }
 
 /// In-place 2D FFT (or inverse, unnormalized like `rustfft` always is) via
@@ -281,5 +329,18 @@ mod tests {
             variance(&img),
             variance(&out)
         );
+    }
+
+    #[test]
+    fn color_eraser_leaves_a_flat_color_page_as_it_is() {
+        // No diagonal frequencies to remove: the page survives the trip to
+        // YUV and back within a level of where it started.
+        let page = image::RgbImage::from_pixel(32, 24, image::Rgb([180, 90, 40]));
+        let cleaned = erase_rainbow_artifacts_rgb(&page);
+        for (before, after) in page.pixels().zip(cleaned.pixels()) {
+            for channel in 0..3 {
+                assert!((before[channel] as i32 - after[channel] as i32).abs() <= 1);
+            }
+        }
     }
 }

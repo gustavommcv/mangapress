@@ -19,7 +19,12 @@ fn natural_key(segment: &str) -> Vec<KeyPart> {
     let mut num = String::new();
     let mut text = String::new();
 
-    for c in segment.chars() {
+    // Case is ignored, as upstream ignores it (`walkSort()` lowercases every
+    // name before splitting it): "chapter 2" sorts between "Chapter 1" and
+    // "Chapter 10", not after every capitalized name. An earlier version
+    // compared the text runs as written, which put all uppercase-initial
+    // names first.
+    for c in segment.to_lowercase().chars() {
         if c.is_ascii_digit() {
             if !text.is_empty() {
                 parts.push(KeyPart::Text(std::mem::take(&mut text)));
@@ -73,6 +78,17 @@ mod tests {
     #[test]
     fn equal_strings_compare_equal() {
         assert_eq!(compare("page002.jpg", "page002.jpg"), Ordering::Equal);
+    }
+
+    #[test]
+    fn case_does_not_affect_the_order() {
+        // Upstream's `walkSort()` on these names gives exactly this order.
+        let mut names = vec!["Chapter 10", "chapter 2", "Chapter 1", "b.jpg", "A.jpg"];
+        names.sort_by(|a, b| compare(a, b));
+        assert_eq!(
+            names,
+            ["A.jpg", "b.jpg", "Chapter 1", "chapter 2", "Chapter 10"]
+        );
     }
 
     #[test]

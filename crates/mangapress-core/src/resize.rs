@@ -32,7 +32,10 @@
 //!    may be smaller than the target on one axis.
 
 use image::imageops::FilterType;
-use image::{GrayImage, Luma};
+
+/// An owned 8-bit image of any pixel layout: pages are grayscale unless
+/// color output was asked for (`--forcecolor`), and then RGB.
+type Buffer<P> = image::ImageBuffer<P, Vec<u8>>;
 
 /// KCC's `AUTO_CROP_THRESHOLD`. The `KDX` profile uses `3.0 *` this value.
 pub const ASPECT_MATCH_TOLERANCE: f64 = 0.015;
@@ -72,12 +75,15 @@ pub fn choose_filter(src: (u32, u32), target: (u32, u32)) -> FilterType {
 
 /// `resizeImage()`'s main decision tree (KFX/norotate branches excluded —
 /// see module docs).
-pub fn resize_page(img: &GrayImage, options: &ResizeOptions) -> GrayImage {
+pub fn resize_page<P: image::Pixel<Subpixel = u8> + 'static>(
+    img: &Buffer<P>,
+    options: &ResizeOptions,
+) -> Buffer<P> {
     let src = img.dimensions();
     let filter = choose_filter(src, options.target);
 
     if options.stretch {
-        return image::imageops::resize(img, options.target.0, options.target.1, filter);
+        return resample(img, options.target, filter, None);
     }
     if options.wallpaper {
         return fit(img, options.target, filter);
@@ -103,18 +109,29 @@ pub fn resize_page(img: &GrayImage, options: &ResizeOptions) -> GrayImage {
 /// `ImageOps.contain()`: scale to fit entirely within `target`, preserving
 /// aspect ratio. The result may be smaller than `target` on one axis — it
 /// is never padded or cropped.
-pub fn contain(img: &GrayImage, target: (u32, u32), filter: FilterType) -> GrayImage {
+pub fn contain<P: image::Pixel<Subpixel = u8> + 'static>(
+    img: &Buffer<P>,
+    target: (u32, u32),
+    filter: FilterType,
+) -> Buffer<P> {
     let (nw, nh) = contain_dimensions(img.dimensions(), target);
-    image::imageops::resize(img, nw, nh, filter)
+    resample(img, (nw, nh), filter, None)
 }
 
 /// `ImageOps.pad()`: [`contain`], then pad with `fill` to exactly `target`,
 /// centered.
-pub fn pad(img: &GrayImage, target: (u32, u32), filter: FilterType, fill: u8) -> GrayImage {
+pub fn pad<P: image::Pixel<Subpixel = u8> + 'static>(
+    img: &Buffer<P>,
+    target: (u32, u32),
+    filter: FilterType,
+    fill: u8,
+) -> Buffer<P> {
     let contained = contain(img, target, filter);
     let (cw, ch) = contained.dimensions();
     let (tw, th) = target;
-    let mut out = GrayImage::from_pixel(tw, th, Luma([fill]));
+    // The same value on every channel: white or black, in gray or in RGB.
+    let fill_pixel = *P::from_slice(&vec![fill; P::CHANNEL_COUNT as usize]);
+    let mut out = Buffer::<P>::from_pixel(tw, th, fill_pixel);
     let x_off = round_half_even(tw.saturating_sub(cw) as f64 * 0.5);
     let y_off = round_half_even(th.saturating_sub(ch) as f64 * 0.5);
     image::imageops::overlay(&mut out, &contained, x_off as i64, y_off as i64);
@@ -133,7 +150,7 @@ pub fn pad(img: &GrayImage, target: (u32, u32), filter: FilterType, fill: u8) ->
 /// Pillow output, not assumed: a 400x201 image padded to 400x400 has a
 /// 199px vertical remainder, and Pillow's `round(199 * 0.5)` -- `round(99.5)`
 /// -- is `100` (nearest even), while the old `199 / 2` gave `99`.
-fn round_half_even(x: f64) -> u32 {
+pub(crate) fn round_half_even(x: f64) -> u32 {
     let floor = x.floor();
     let diff = x - floor;
     let rounded = if diff < 0.5 {
@@ -148,34 +165,50 @@ fn round_half_even(x: f64) -> u32 {
     rounded as u32
 }
 
+/// Resamples the way Pillow does (see [`crate::resample`]). The filter is
+/// still named by the `image` crate's type, which is what this module's
+/// callers and [`choose_filter`] speak: its Catmull-Rom is Pillow's bicubic,
+/// its Lanczos3 Pillow's Lanczos.
+pub(crate) fn resample<P: image::Pixel<Subpixel = u8> + 'static>(
+    img: &Buffer<P>,
+    size: (u32, u32),
+    filter: FilterType,
+    source_box: Option<[f64; 4]>,
+) -> Buffer<P> {
+    let filter = match filter {
+        FilterType::CatmullRom => crate::resample::Filter::Bicubic,
+        _ => crate::resample::Filter::Lanczos,
+    };
+    crate::resample::resize(img, size, filter, source_box)
+}
+
 /// `ImageOps.fit()`: scale so `target` is entirely filled (may exceed it on
 /// one axis), then center-crop down to exactly `target`. No padding; may
 /// crop away source content.
 ///
-/// Crops the source *first* (in source-pixel space), then resizes the crop
-/// to `target` in a single pass -- not the other way around. An earlier
-/// version resized the whole image up to a size guaranteed to cover
-/// `target`, then cropped the resized result; validated against real
-/// Pillow, that order could diverge drastically (mean pixel error in the
-/// tens, on real page content, not just synthetic test patterns) whenever
-/// a significant crop was needed, because resizing the *entire* source
-/// first blends content from well outside the eventual crop window into
-/// every pixel near its edges before that content ever gets cropped away.
-/// Real Pillow computes its crop box with continuous (non-integer)
-/// coordinates and resizes directly from that fractional window in one
-/// call; this rounds the box to the nearest integer pixel first, which
-/// removes the large source of error above but still isn't bit-identical
-/// to Pillow's fractional sampling -- residual differences on real content
-/// were measured in the low single digits (out of 255), consistent with
-/// ordinary cross-library resampling variance rather than a framing bug.
-pub fn fit(img: &GrayImage, target: (u32, u32), filter: FilterType) -> GrayImage {
+/// Done as Pillow does it, in one resampling pass from a *fractional*
+/// source box — the centered part of the image with the target's
+/// proportions, which rarely starts or ends on a whole pixel. Two earlier
+/// versions got this wrong in turn: resizing the whole image and cropping
+/// afterwards blended content from outside the crop into its edges (mean
+/// error in the tens), and rounding the box to whole pixels before resizing
+/// shifted the result by a fraction of a pixel, which the parity check
+/// against real KCC measured at 2.4 gray levels on hatched and screentoned
+/// art — a page whose cropped proportions land within upstream's tolerance
+/// of the screen's takes this path, so it is not a rare one.
+pub fn fit<P: image::Pixel<Subpixel = u8> + 'static>(
+    img: &Buffer<P>,
+    target: (u32, u32),
+    filter: FilterType,
+) -> Buffer<P> {
     let (sw, sh) = img.dimensions();
-    let (tw, th) = target;
     let (sw_f, sh_f) = (sw as f64, sh as f64);
     let live_ratio = sw_f / sh_f;
-    let out_ratio = tw as f64 / th as f64;
+    let out_ratio = target.0 as f64 / target.1 as f64;
 
-    let (crop_w, crop_h) = if live_ratio >= out_ratio {
+    let (crop_w, crop_h) = if live_ratio == out_ratio {
+        (sw_f, sh_f)
+    } else if live_ratio >= out_ratio {
         (out_ratio * sh_f, sh_f)
     } else {
         (sw_f, sw_f / out_ratio)
@@ -183,28 +216,42 @@ pub fn fit(img: &GrayImage, target: (u32, u32), filter: FilterType) -> GrayImage
     let crop_left = (sw_f - crop_w) * 0.5;
     let crop_top = (sh_f - crop_h) * 0.5;
 
-    let box_left = crop_left.round() as u32;
-    let box_top = crop_top.round() as u32;
-    let box_right = ((crop_left + crop_w).round() as u32).min(sw);
-    let box_bottom = ((crop_top + crop_h).round() as u32).min(sh);
-    let box_w = box_right.saturating_sub(box_left).max(1);
-    let box_h = box_bottom.saturating_sub(box_top).max(1);
-
-    let cropped = image::imageops::crop_imm(img, box_left, box_top, box_w, box_h).to_image();
-    image::imageops::resize(&cropped, tw, th, filter)
+    resample(
+        img,
+        target,
+        filter,
+        Some([crop_left, crop_top, crop_left + crop_w, crop_top + crop_h]),
+    )
 }
 
+/// The size `ImageOps.contain()` resizes to, computed the way Pillow
+/// computes it rather than by an equivalent-looking shortcut: the limiting
+/// axis takes the target's size outright, and the other one is
+/// `round(other / limiting * target)` — in that order of operations, and
+/// with Python's `round()` (half to even). An earlier version scaled both
+/// axes by `min(tw / sw, th / sh)` and rounded half away from zero, which
+/// agrees almost always and is a pixel off when the free axis lands on (or
+/// within a float's error of) a `.5`: 94 of 409,500 source sizes checked
+/// against Pillow's rule across five device resolutions, e.g. 720x1280 on a
+/// 1072x1448 screen is 814x1448 in Pillow and was 815x1448 here.
 fn contain_dimensions((sw, sh): (u32, u32), (tw, th): (u32, u32)) -> (u32, u32) {
-    let scale = (tw as f64 / sw as f64).min(th as f64 / sh as f64);
-    (
-        ((sw as f64 * scale).round() as u32).max(1),
-        ((sh as f64 * scale).round() as u32).max(1),
-    )
+    let (sw_f, sh_f) = (sw as f64, sh as f64);
+    let image_ratio = sw_f / sh_f;
+    let target_ratio = tw as f64 / th as f64;
+
+    if image_ratio == target_ratio {
+        (tw, th)
+    } else if image_ratio > target_ratio {
+        (tw, round_half_even(sh_f / sw_f * tw as f64).max(1))
+    } else {
+        (round_half_even(sw_f / sh_f * th as f64).max(1), th)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::{GrayImage, Luma};
 
     fn default_options(target: (u32, u32)) -> ResizeOptions {
         ResizeOptions {
@@ -418,5 +465,26 @@ mod tests {
             (tw, th),
             "non-KDX should not crop-to-fill at this ratio difference"
         );
+    }
+
+    #[test]
+    fn contain_dimensions_match_pillows_rounding() {
+        // Pillow's `ImageOps.contain()` size for each source on a 1072x1448
+        // device; the first three are sizes the previous rule got one pixel
+        // wrong.
+        for (source, expected) in [
+            ((720, 1280), (814, 1448)),
+            ((608, 741), (1072, 1306)),
+            ((510, 1632), (452, 1448)),
+            ((900, 1350), (965, 1448)),
+            ((1072, 1448), (1072, 1448)),
+            ((2144, 2896), (1072, 1448)),
+        ] {
+            assert_eq!(
+                contain_dimensions(source, (1072, 1448)),
+                expected,
+                "{source:?}"
+            );
+        }
     }
 }

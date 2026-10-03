@@ -86,13 +86,19 @@ pub struct Cli {
     #[arg(long)]
     pub wallpaper: bool,
 
+    /// Disable autodetection and force black borders: the pad color for
+    /// CBZ/PDF pages and the page background in an EPUB.
+    #[arg(long)]
+    pub blackborders: bool,
+
     /// Disable autodetection and force white borders instead of padding
     /// with the page's detected background color (CBZ/PDF output only).
     #[arg(long)]
     pub whiteborders: bool,
 
-    /// Quantize to the device profile's grayscale palette (dithered) and
-    /// save PNG instead of full-tone JPEG.
+    /// Quantize to the device profile's grayscale palette (dithered) instead
+    /// of full-tone JPEG, stored as KCC stores it: GIF for a Kindle profile's
+    /// EPUB, PNG otherwise.
     #[arg(long)]
     pub forcepng: bool,
 
@@ -100,6 +106,81 @@ pub struct Cli {
     /// for Kindle Scribe/Colorsoft profiles (KS*/KCS), 85 otherwise.
     #[arg(long, value_parser = clap::value_parser!(u8).range(1..=100))]
     pub jpeg_quality: Option<u8>,
+
+    /// Keep the whole-spread copy of a double-page spread upright instead
+    /// of rotating it.
+    #[arg(long)]
+    pub norotate: bool,
+
+    /// Put the whole-spread copy before the two halves instead of after.
+    #[arg(long)]
+    pub rotatefirst: bool,
+
+    /// Restack every page's two halves on top of each other (turns a 1x4
+    /// strip into 2x2) instead of looking for double-page spreads.
+    #[arg(long)]
+    pub maximizestrips: bool,
+
+    /// Webtoon mode: join each chapter's images into one vertical strip and
+    /// cut it into screen-sized pages between panels. Implies left-to-right
+    /// order, white borders, no upscaling and no margin cropping.
+    #[arg(short = 'w', long)]
+    pub webtoon: bool,
+
+    /// Keep color pages in color instead of converting everything to
+    /// grayscale. Pages with no real color are still converted.
+    #[arg(long)]
+    pub forcecolor: bool,
+
+    /// With --forcepng and --forcecolor, save color pages as PNG as well.
+    #[arg(long = "force-png-rgb")]
+    pub force_png_rgb: bool,
+
+    /// Autocontrast color pages too.
+    #[arg(long)]
+    pub colorautocontrast: bool,
+
+    /// With --forcepng, store pages as 8-bit grayscale instead of at the
+    /// palette's own (smaller, less widely supported) bit depth.
+    #[arg(long)]
+    pub pnglegacy: bool,
+
+    /// With --forcepng, keep all 256 gray levels instead of quantizing to
+    /// the device palette.
+    #[arg(long)]
+    pub noquantize: bool,
+
+    /// Leave every image exactly as it is: no cropping, resizing or
+    /// recoding, whatever the profile and the other options say.
+    #[arg(long)]
+    pub noprocessing: bool,
+
+    /// Turn pages the opposite way to the reading order.
+    #[arg(long)]
+    pub invertdirection: bool,
+
+    /// Start the book on the opposite side of a two-page (landscape) view,
+    /// to line double-page spreads up.
+    #[arg(long)]
+    pub spreadshift: bool,
+
+    /// Show a single centered page in a two-page (landscape) view.
+    #[arg(long)]
+    pub onepagelandscape: bool,
+
+    /// For a Kobo profile's EPUB, name the file `.epub` instead of
+    /// `.kepub.epub` when the name is derived from the input.
+    #[arg(long)]
+    pub nokepub: bool,
+
+    /// Cut the front cover out of a wide first image (a jacket or spread
+    /// scan) for the book's cover, instead of using the whole image.
+    #[arg(long)]
+    pub smartcovercrop: bool,
+
+    /// Crop the book's cover to fill the screen instead of fitting inside it.
+    #[arg(long)]
+    pub coverfill: bool,
 
     /// Rotate double-page spreads clockwise instead of the default
     /// counter-clockwise.
@@ -130,8 +211,9 @@ pub struct Cli {
     #[arg(long)]
     pub eraserainbow: bool,
 
-    /// Output format.
-    #[arg(short, long, value_enum, default_value_t = Format::Epub)]
+    /// Output format. `auto` picks the device family's usual one: CBZ for
+    /// the four oldest Kindles, PDF for reMarkable, EPUB for everything else.
+    #[arg(short, long, value_enum, default_value_t = Format::Auto)]
     pub format: Format,
 
     /// Output file or directory.
@@ -193,6 +275,7 @@ pub enum Splitter {
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
+    Auto,
     Epub,
     Cbz,
     Pdf,

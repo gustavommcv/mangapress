@@ -43,25 +43,23 @@ mangapress also doesn't download or organize chapters — that's
 [Mangabind](https://github.com/gustavommcv/mangabind)'s job; mangapress only ever
 reads a finished `.cbz`/folder and writes a converted book.
 
-**Not yet in scope:** color output. Every page is converted to grayscale, even on the
-color-capable profiles this project already lists (`KCS` Kindle Colorsoft, `KoCC` Kobo Clara
-Colour, `KoLC` Kobo Libra Colour) — picking one of those today gets the right resolution and
-nothing else color-specific. Fine for traditionally black-and-white manga (the common case this
-project targets), not for webtoons or color manga read on color-capable hardware. See
-[docs/adr/0010-color-output-deferred.md](docs/adr/0010-color-output-deferred.md) for why, and what
-adding it would actually involve. `--eraserainbow` (below) does not change this — it fixes a
-display artifact, it doesn't produce color output.
+**Color output is opt-in.** By default every page comes out grayscale, as upstream's does;
+`--forcecolor` keeps color pages (and the cover) in color, on any profile, while pages with no real
+color are still converted. Unlike upstream's window, the command line does not turn it on by itself
+for a color-capable profile (`KCS` Kindle Colorsoft, `KoCC` Kobo Clara Colour, `KoLC` Kobo Libra
+Colour): pass the flag. `--eraserainbow` (below) is a separate thing — it fixes a display artifact
+of color e-ink screens, on grayscale and color pages alike.
 
 ## Status
 
 Functional: device profiles for ~40 Kindle/Kobo/reMarkable/generic targets, the full image
-pipeline (per-page background detection, margin and page-number-aware cropping, inter-panel
-cropping, resize, gamma/autocontrast, double-page-spread split/rotate, rainbow-artifact removal),
-`ComicInfo.xml` metadata resolution, and EPUB/CBZ/PDF output all work end to end and are covered by
-an extensive test suite — see
+pipeline (per-page background and color detection, margin and page-number-aware cropping,
+inter-panel cropping, resize, gamma/autocontrast, double-page-spread split/rotate, rainbow-artifact
+removal, grayscale or color output, palette quantization), webtoon mode (long strips cut into pages
+between panels), `ComicInfo.xml` metadata and bookmarks, and EPUB/CBZ/PDF output all work end to end
+and are covered by an extensive test suite, checked page by page against upstream KCC 12.0.0 — see
 [docs/adr](docs/adr/README.md) for the design decisions made so far, and open an issue if you hit
-a rough edge. Everything is grayscale output today regardless of profile (see "Not yet in scope"
-above) — still pre-1.0.
+a rough edge. Still pre-1.0.
 
 ## Performance
 
@@ -137,7 +135,8 @@ A few of the more commonly used flags:
 
 - `--profile <CODE>` — target device (e.g. `KV` Kindle Voyage, `KPW5` Kindle Paperwhite 5,
   `KoAO` Kobo Aura ONE, `Rmk2` reMarkable 2, `OTHER` for `--customwidth`/`--customheight`).
-- `--format <epub|cbz|pdf>` — output format (default `epub`).
+- `--format <auto|epub|cbz|pdf>` — output format (default `auto`: CBZ for the four oldest Kindles,
+  PDF for reMarkable, EPUB for everything else).
 - `--manga-style` — right-to-left reading order and spread-split order.
 - `--cropping <disabled|margins|margins-and-page-numbers>` — margin detection, with or without
   page-number-aware trimming (default: both).

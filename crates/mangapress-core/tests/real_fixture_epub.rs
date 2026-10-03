@@ -59,13 +59,22 @@ fn builds_a_valid_epub_from_a_real_mangabind_cbz() {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Untitled".to_string()),
-        author: "Unknown".to_string(),
+        authors: vec!["Unknown".to_string()],
         language: "en".to_string(),
         reading_direction: ReadingDirection {
             right_to_left: true,
         },
         description: None,
         nested_toc: false,
+        kindle: false,
+        kindle_resolution: None,
+        invert_direction: false,
+        spread_shift: false,
+        one_page_landscape: false,
+        cover: None,
+        bookmarks: Vec::new(),
+        series: None,
+        modified: "2026-01-02T03:04:05Z".to_string(),
     };
 
     let epub_bytes = build_epub(&chapters, &options).expect("building the EPUB should succeed");

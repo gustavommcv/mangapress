@@ -5,13 +5,14 @@ use anyhow::{bail, Context};
 use args::{Cli, Cropping, Format, InterPanelCrop, MetadataTitle, Splitter};
 use clap::{error::ErrorKind, Parser};
 use mangapress_core::archive::{cbz::extract_cbz, folder::read_folder, SourceEntry};
-use mangapress_core::ebook::{cbz_out, epub, group_into_chapters, pdf, Chapter, Page};
+use mangapress_core::ebook::{cbz_out, cover, epub, group_into_chapters, pdf, Chapter, Page};
 use mangapress_core::manga::ReadingDirection;
 use mangapress_core::metadata::{self, MetadataTitleMode};
 use mangapress_core::pipeline::{
-    process_page, CroppingMode, OutputFormat, PipelineOptions, SplitterMode,
+    default_jpeg_quality, process_page, CroppingMode, OutputFormat, PipelineOptions, ProcessedPage,
+    SplitterMode,
 };
-use mangapress_core::profile::Profile;
+use mangapress_core::profile::{Family, Profile};
 use protocol::{event_write_failure, EventSink, RunFailure};
 use rayon::prelude::*;
 use serde_json::json;
@@ -117,8 +118,74 @@ fn absolute_display(path: &Path) -> String {
     .into_owned()
 }
 
+/// `SystemTime` as `YYYY-MM-DDThh:mm:ssZ`, for the EPUB's required
+/// `dcterms:modified`. Hand-rolled (days-since-epoch to a civil date) rather
+/// than pulling in a date-time crate for this one field. A clock set before
+/// 1970 reads as the epoch.
+fn utc_timestamp(now: std::time::SystemTime) -> String {
+    let seconds = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let (days, second_of_day) = (seconds / 86_400, seconds % 86_400);
+
+    // Days since 1970-01-01 to a proleptic Gregorian date, counting in
+    // 400-year eras that start on 1 March so the leap day falls last.
+    let shifted = days + 719_468;
+    let era = shifted / 146_097;
+    let day_of_era = shifted % 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = year_of_era + era * 400 + u64::from(month <= 2);
+
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        second_of_day / 3_600,
+        second_of_day % 3_600 / 60,
+        second_of_day % 60
+    )
+}
+
+/// What `--format auto` means for a device: upstream's own defaults, except
+/// that a Kindle gets EPUB where upstream would go on to MOBI (which this
+/// tool doesn't write).
+fn automatic_format(profile: &Profile) -> Format {
+    match profile.family() {
+        Family::Kindle if matches!(profile.code, "K1" | "K2" | "K34" | "KDX") => Format::Cbz,
+        Family::Remarkable => Format::Pdf,
+        _ => Format::Epub,
+    }
+}
+
+/// Upstream's file name for a Kobo EPUB derived from an input *file*: every
+/// run of characters that aren't letters, digits or underscores becomes one
+/// underscore.
+fn kobo_safe_stem(stem: &str) -> String {
+    let mut out = String::with_capacity(stem.len());
+    let mut in_run = false;
+    for c in stem.chars() {
+        if c.is_alphanumeric() || c == '_' {
+            out.push(c);
+            in_run = false;
+        } else if !in_run {
+            out.push('_');
+            in_run = true;
+        }
+    }
+    out
+}
+
 fn format_name(format: Format) -> &'static str {
     match format {
+        Format::Auto => unreachable!("--format auto is resolved before any format is named"),
         Format::Epub => "epub",
         Format::Cbz => "cbz",
         Format::Pdf => "pdf",
@@ -143,20 +210,25 @@ struct PageProcessingFailure {
 fn process_chapter_pages(
     pages: &[Page],
     options: &PipelineOptions,
+    first_chapter: bool,
     on_page_done: impl Fn(usize, usize) -> std::io::Result<()> + Sync,
 ) -> Result<Vec<Page>, PageProcessingFailure> {
     let progress = Mutex::new((vec![false; pages.len()], 0usize));
-    let outputs: Vec<Vec<(String, Vec<u8>)>> = pages
+    let outputs: Vec<Vec<ProcessedPage>> = pages
         .par_iter()
         .enumerate()
         .map(|(page_index, source_page)| {
             let page_number = page_index + 1;
-            let result = process_page(&source_page.bytes, options).map_err(|error| {
-                PageProcessingFailure {
-                    page: page_number,
-                    diagnostic: error.to_string(),
-                }
-            })?;
+            // The book's first page is the one upstream leaves uncropped
+            // when it is a color page (a cover).
+            let is_first_page = first_chapter && page_index == 0;
+            let result =
+                process_page(&source_page.bytes, options, is_first_page).map_err(|error| {
+                    PageProcessingFailure {
+                        page: page_number,
+                        diagnostic: error.to_string(),
+                    }
+                })?;
             let mut progress = progress.lock().map_err(|_| PageProcessingFailure {
                 page: page_number,
                 diagnostic: "page progress lock was poisoned".to_string(),
@@ -176,8 +248,14 @@ fn process_chapter_pages(
 
     let mut flattened = Vec::with_capacity(pages.len());
     for page_outputs in outputs {
-        for (extension, bytes) in page_outputs {
-            flattened.push(Page { extension, bytes });
+        for (piece, page) in page_outputs.into_iter().enumerate() {
+            flattened.push(Page {
+                extension: page.extension,
+                bytes: page.bytes,
+                black_background: page.black_background,
+                role: page.role,
+                continues_source_page: piece > 0,
+            });
         }
     }
     Ok(flattened)
@@ -356,6 +434,12 @@ fn run<W: std::io::Write + Send>(
         );
     }
 
+    let mut cli = cli;
+    if cli.format == Format::Auto {
+        cli.format = automatic_format(profile);
+    }
+    let cli = cli;
+
     if cli.nested_toc && cli.format != Format::Epub {
         *failure = RunFailure::new(
             "nested_toc_unsupported_format",
@@ -525,6 +609,15 @@ fn run<W: std::io::Write + Send>(
     }
 
     let source_chapters = group_into_chapters(source_entries);
+    // The cover is made from the book's first image as it came, apart from
+    // whatever page processing does to that image later.
+    // Webtoon mode has no separate cover upstream (its first image is a
+    // strip, not a cover); the first cut page stands in for one.
+    let cover_source: Option<Vec<u8>> = source_chapters
+        .iter()
+        .find_map(|chapter| chapter.pages.first())
+        .filter(|_| !cli.webtoon)
+        .map(|page| page.bytes.clone());
     let total_chapters = source_chapters.len();
     let total_pages: usize = source_chapters.iter().map(|c| c.pages.len()).sum();
     if !quiet {
@@ -553,7 +646,19 @@ fn run<W: std::io::Write + Send>(
             }),
         )
         .map_err(event_write_failure)?;
-    let extension = format_name(cli.format);
+    // A Kobo profile's EPUB is a "kepub" by name, as upstream names it —
+    // unless asked not to, or the resolution is custom (upstream no longer
+    // sees a Kobo profile then).
+    let kepub = cli.format == Format::Epub
+        && profile.family() == Family::Kobo
+        && !cli.nokepub
+        && cli.customwidth.unwrap_or(0) == 0
+        && cli.customheight.unwrap_or(0) == 0;
+    let extension = if kepub {
+        "kepub.epub"
+    } else {
+        format_name(cli.format)
+    };
     let output_path = match &cli.output {
         Some(path) if path.is_dir() => {
             path.join(format!("{}.{extension}", sanitize_filename(&title)))
@@ -579,6 +684,13 @@ fn run<W: std::io::Write + Send>(
             path.join(format!("{}.{extension}", sanitize_filename(&title)))
         }
         Some(path) => path.clone(),
+        None if kepub && input.is_file() => {
+            let stem = input
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            input.with_file_name(format!("{}.{extension}", kobo_safe_stem(&stem)))
+        }
         None => input.with_extension(extension),
     };
     // With no --output (or an explicit one matching the input), converting
@@ -666,11 +778,55 @@ fn run<W: std::io::Write + Send>(
         return Ok(());
     }
 
+    // Webtoon mode works on strips, not pages: each chapter's images are
+    // joined and cut again before anything else happens to them, so the
+    // page count from here on is the cut pages'.
+    let (source_chapters, total_pages) = if cli.webtoon {
+        let device = profile.effective_resolution(cli.customwidth, cli.customheight);
+        let mut chapters = source_chapters;
+        for chapter in &mut chapters {
+            let sources: Vec<&[u8]> = chapter
+                .pages
+                .iter()
+                .map(|page| page.bytes.as_slice())
+                .collect();
+            match mangapress_core::webtoon::pages_from_chapter(&sources, device) {
+                Ok(pages) => {
+                    chapter.pages = pages
+                        .into_iter()
+                        .map(|bytes| Page {
+                            extension: "png".to_string(),
+                            bytes,
+                            ..Default::default()
+                        })
+                        .collect();
+                }
+                Err(error) => {
+                    *failure = RunFailure::new(
+                        "webtoon_split_failed",
+                        "process",
+                        true,
+                        format!("Couldn't cut chapter '{}' into pages.", chapter.title),
+                        format!("cutting chapter '{}' into pages: {error}", chapter.title),
+                    )
+                    .with_manga(title.clone())
+                    .with_chapter(chapter.title.clone());
+                    bail!("cutting chapter '{}' into pages: {error}", chapter.title);
+                }
+            }
+        }
+        let total = chapters.iter().map(|chapter| chapter.pages.len()).sum();
+        (chapters, total)
+    } else {
+        (source_chapters, total_pages)
+    };
+
     let pipeline_options = PipelineOptions {
         profile,
         width_override: cli.customwidth,
         height_override: cli.customheight,
-        manga_style: cli.manga_style,
+        // Upstream's webtoon mode forces these four whatever was asked for.
+        manga_style: cli.manga_style && !cli.webtoon,
         cropping: match cli.cropping {
             Cropping::Disabled => CroppingMode::Disabled,
             Cropping::Margins => CroppingMode::Margins,
@@ -693,13 +849,25 @@ fn run<W: std::io::Write + Send>(
             Splitter::Rotate => SplitterMode::Rotate,
             Splitter::Both => SplitterMode::Both,
         },
-        upscale: cli.upscale,
+        upscale: cli.upscale && !cli.webtoon,
         stretch: cli.stretch,
         wallpaper: cli.wallpaper,
-        white_borders: cli.whiteborders,
+        white_borders: cli.whiteborders || cli.webtoon,
+        black_borders: cli.blackborders && !cli.webtoon,
+        webtoon: cli.webtoon,
+        no_rotate: cli.norotate,
+        rotate_first: cli.rotatefirst,
+        maximize_strips: cli.maximizestrips,
+        color_autocontrast: cli.colorautocontrast,
+        force_color: cli.forcecolor,
+        force_png_rgb: cli.force_png_rgb,
+        png_legacy: cli.pnglegacy,
+        no_quantize: cli.noquantize,
+        no_processing: cli.noprocessing,
         rotate_right: cli.rotateright,
         force_png: cli.forcepng,
         output_format: match cli.format {
+            Format::Auto => unreachable!("--format auto was resolved above"),
             Format::Epub => OutputFormat::Epub,
             Format::Cbz => OutputFormat::Cbz,
             Format::Pdf => OutputFormat::Pdf,
@@ -756,6 +924,7 @@ fn run<W: std::io::Write + Send>(
         let pages = match process_chapter_pages(
             &chapter.pages,
             &pipeline_options,
+            chapter_index == 0,
             |done_in_chapter, page_number| {
                 let done = source_pages_done + done_in_chapter;
                 if events.enabled() {
@@ -880,17 +1049,54 @@ fn run<W: std::io::Write + Send>(
     .with_path(output_path_absolute.clone());
     let result_author = author.clone();
     let output_result = match cli.format {
+        Format::Auto => unreachable!("--format auto was resolved above"),
         Format::Epub => epub::build_epub(
             &processed_chapters,
             &epub::EpubOptions {
                 title: title.clone(),
-                author: author.clone(),
+                authors: resolved.authors,
                 language: cli.language.clone(),
                 reading_direction: ReadingDirection {
-                    right_to_left: cli.manga_style,
+                    right_to_left: cli.manga_style && !cli.webtoon,
                 },
                 description: resolved.summary,
                 nested_toc: cli.nested_toc,
+                kindle: profile.family() == Family::Kindle,
+                // Upstream's Kindle fixed-layout block is for a Kindle
+                // profile at its own resolution; overriding either
+                // dimension makes it upstream's "Custom" profile, which
+                // gets none.
+                kindle_resolution: (profile.family() == Family::Kindle
+                    && cli.customwidth.unwrap_or(0) == 0
+                    && cli.customheight.unwrap_or(0) == 0)
+                    .then_some((profile.width, profile.height)),
+                invert_direction: cli.invertdirection,
+                spread_shift: cli.spreadshift,
+                one_page_landscape: cli.onepagelandscape,
+                cover: cover_source
+                    .as_deref()
+                    .map(|source| {
+                        cover::build_cover(
+                            source,
+                            &cover::CoverOptions {
+                                target: pipeline_options.target_resolution(),
+                                right_to_left: cli.manga_style,
+                                smart_crop: cli.smartcovercrop,
+                                fill: cli.coverfill,
+                                force_color: cli.forcecolor,
+                                jpeg_quality: cli
+                                    .jpeg_quality
+                                    .unwrap_or_else(|| default_jpeg_quality(profile)),
+                            },
+                        )
+                    })
+                    .transpose()?,
+                bookmarks: comic_info
+                    .as_ref()
+                    .map(|info| info.bookmarks.clone())
+                    .unwrap_or_default(),
+                series: resolved.series.map(|name| (name, resolved.series_position)),
+                modified: utc_timestamp(std::time::SystemTime::now()),
             },
         )?,
         Format::Cbz => {
@@ -992,6 +1198,39 @@ fn run<W: std::io::Write + Send>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_format_follows_the_device_family() {
+        let format = |code: &str| automatic_format(Profile::by_code(code).unwrap());
+        for code in ["K1", "K2", "K34", "KDX"] {
+            assert_eq!(format(code), Format::Cbz, "{code}");
+        }
+        assert_eq!(format("K11"), Format::Epub);
+        assert_eq!(format("KoC"), Format::Epub);
+        assert_eq!(format("Rmk2"), Format::Pdf);
+        assert_eq!(format("OTHER"), Format::Epub);
+    }
+
+    #[test]
+    fn kobo_safe_stem_collapses_everything_but_word_characters() {
+        assert_eq!(kobo_safe_stem("My Book (v1)"), "My_Book_v1_");
+        assert_eq!(kobo_safe_stem("already_safe_01"), "already_safe_01");
+        assert_eq!(kobo_safe_stem("君の名は - 1"), "君の名は_1");
+    }
+
+    #[test]
+    fn utc_timestamp_formats_known_instants() {
+        let at = |seconds: u64| {
+            utc_timestamp(std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds))
+        };
+        assert_eq!(at(0), "1970-01-01T00:00:00Z");
+        // A leap day, the day after it, and a year boundary.
+        assert_eq!(at(1_709_164_800), "2024-02-29T00:00:00Z");
+        assert_eq!(at(1_709_251_199), "2024-02-29T23:59:59Z");
+        assert_eq!(at(1_709_251_200), "2024-03-01T00:00:00Z");
+        assert_eq!(at(1_790_998_496), "2026-10-03T03:34:56Z");
+        assert_eq!(at(4_102_444_799), "2099-12-31T23:59:59Z");
+    }
 
     #[test]
     fn sanitize_filename_replaces_every_reserved_character() {
@@ -1099,6 +1338,17 @@ mod tests {
             stretch: false,
             wallpaper: false,
             white_borders: false,
+            black_borders: false,
+            no_rotate: false,
+            rotate_first: false,
+            maximize_strips: false,
+            color_autocontrast: false,
+            webtoon: false,
+            force_color: false,
+            force_png_rgb: false,
+            png_legacy: false,
+            no_quantize: false,
+            no_processing: false,
             rotate_right: false,
             force_png: false,
             output_format: OutputFormat::Epub,
@@ -1126,11 +1376,12 @@ mod tests {
             .map(|&g| Page {
                 extension: "png".to_string(),
                 bytes: solid_gray_png(40, g),
+                ..Default::default()
             })
             .collect();
 
         let options = minimal_pipeline_options();
-        let processed = process_chapter_pages(&pages, &options, |_, _| Ok(())).unwrap();
+        let processed = process_chapter_pages(&pages, &options, false, |_, _| Ok(())).unwrap();
         assert_eq!(processed.len(), gray_levels.len());
 
         let output_grays: Vec<u8> = processed
@@ -1155,12 +1406,13 @@ mod tests {
             .map(|_| Page {
                 extension: "png".to_string(),
                 bytes: solid_gray_png(20, 128),
+                ..Default::default()
             })
             .collect();
         let options = minimal_pipeline_options();
 
         let calls = std::sync::Mutex::new(Vec::new());
-        process_chapter_pages(&pages, &options, |done, page| {
+        process_chapter_pages(&pages, &options, false, |done, page| {
             calls.lock().unwrap().push((done, page));
             Ok(())
         })

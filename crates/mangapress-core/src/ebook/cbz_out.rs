@@ -66,6 +66,7 @@ mod tests {
                 .map(|_| Page {
                     extension: "jpg".to_string(),
                     bytes: b"fake-jpeg".to_vec(),
+                    ..Default::default()
                 })
                 .collect(),
         }

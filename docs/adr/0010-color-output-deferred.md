@@ -2,7 +2,13 @@
 
 ## Status
 
-Accepted.
+Superseded: color output is implemented (`--forcecolor`, with `--force-png-rgb` and
+`--colorautocontrast`). What follows is kept as the record of why it was deferred and of the
+shape sketched for it, which the implementation followed: the geometric stages work on the page's
+RGB pixels steered by a grayscale proxy, and only color pages kept in color skip the conversion to
+gray. Two things the sketch below did not anticipate turned out to matter even for *grayscale*
+output and were fixed first: upstream's color verdict decides whether a page is autocontrasted,
+and upstream's gray conversion weights the channels differently from the `image` crate's.
 
 ## Context
 

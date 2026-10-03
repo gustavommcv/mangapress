@@ -31,6 +31,21 @@
 
 use image::{GrayImage, Luma};
 
+/// `gammaCorrectImage()`'s per-value mapping, `int(255 * (v / 255) ** gamma)`,
+/// as a lookup table. Computed in `f64` like upstream's Python floats, from
+/// the gamma's shortest decimal form rather than its `f32` bits: `1.8f32`
+/// widened directly is `1.7999999523...`, not the `1.8` a user typed and
+/// Python parsed, and that last-digit difference is enough to move a
+/// handful of the 256 entries by one.
+fn gamma_table(gamma: f32) -> [u8; 256] {
+    let gamma: f64 = gamma.to_string().parse().unwrap_or(gamma as f64);
+    let mut table = [0u8; 256];
+    for (value, slot) in table.iter_mut().enumerate() {
+        *slot = (255.0 * (value as f64 / 255.0).powf(gamma)) as u8;
+    }
+    table
+}
+
 /// `gammaCorrectImage()`. `gamma == 1.0` is a no-op (matching upstream's
 /// explicit `if gamma == 1.0: pass`), returning a clone rather than
 /// re-deriving an identity transform.
@@ -38,10 +53,116 @@ pub fn gamma_correct(page: &GrayImage, gamma: f32) -> GrayImage {
     if gamma == 1.0 {
         return page.clone();
     }
+    let table = gamma_table(gamma);
     GrayImage::from_fn(page.width(), page.height(), |x, y| {
-        let v = page.get_pixel(x, y)[0] as f32 / 255.0;
-        Luma([(255.0 * v.powf(gamma)) as u8])
+        Luma([table[page.get_pixel(x, y)[0] as usize]])
     })
+}
+
+/// [`gamma_correct`] on each channel of an RGB page — where upstream applies
+/// it: before the page is converted to grayscale, not after. The two orders
+/// agree on a neutral pixel and differ on a colored one.
+pub fn gamma_correct_rgb(page: &image::RgbImage, gamma: f32) -> image::RgbImage {
+    if gamma == 1.0 {
+        return page.clone();
+    }
+    let table = gamma_table(gamma);
+    let mut out = page.clone();
+    for sample in out.iter_mut() {
+        *sample = table[*sample as usize];
+    }
+    out
+}
+
+/// `ImageOps.autocontrast(image, preserve_tone=True)` on an RGB image: one
+/// stretch for all three channels, taken from the darkest and lightest
+/// values of the image's *grayscale*, so the colors keep their balance. An
+/// image whose grayscale is a single value is left as it is. Used for the
+/// cover, and for color pages kept in color.
+pub fn autocontrast_preserving_tone(image: &image::RgbImage) -> image::RgbImage {
+    let mut histogram = [0u32; 256];
+    for pixel in crate::color::to_gray(image).pixels() {
+        histogram[pixel[0] as usize] += 1;
+    }
+    let (Some(low), Some(high)) = (
+        histogram.iter().position(|&count| count > 0),
+        histogram.iter().rposition(|&count| count > 0),
+    ) else {
+        return image.clone();
+    };
+    if high <= low {
+        return image.clone();
+    }
+
+    let scale = 255.0 / (high - low) as f64;
+    let offset = -(low as f64) * scale;
+    let mut table = [0u8; 256];
+    for (value, slot) in table.iter_mut().enumerate() {
+        *slot = ((value as f64 * scale + offset) as i32).clamp(0, 255) as u8;
+    }
+
+    let mut out = image.clone();
+    for sample in out.iter_mut() {
+        *sample = table[*sample as usize];
+    }
+    out
+}
+
+/// `autolevelImage()` on a color page: the black point is found and applied
+/// on the luma channel alone — the page goes to YCbCr, every Y below the
+/// most common of its 64 darkest values is raised to it, and it comes back.
+/// The trip there and back is Pillow's own, losses included (see
+/// [`crate::color::YCbCr`]).
+pub fn autolevel_rgb(page: &image::RgbImage) -> image::RgbImage {
+    let ycbcr = crate::color::YCbCr::new();
+    let converted: Vec<[u8; 3]> = page
+        .as_raw()
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&pixel| ycbcr.from_rgb(pixel))
+        .collect();
+
+    let mut histogram = [0u32; 256];
+    for pixel in &converted {
+        histogram[pixel[0] as usize] += 1;
+    }
+    let mut black_point: u8 = 0;
+    let mut best_count = histogram[0];
+    for (level, &count) in histogram.iter().enumerate().take(64).skip(1) {
+        if count > best_count {
+            best_count = count;
+            black_point = level as u8;
+        }
+    }
+
+    let mut out = page.clone();
+    for (sample, [y, cb, cr]) in out
+        .as_mut()
+        .as_chunks_mut::<3>()
+        .0
+        .iter_mut()
+        .zip(converted)
+    {
+        *sample = ycbcr.to_rgb([y.max(black_point), cb, cr]);
+    }
+    out
+}
+
+/// `autocontrastImage()` for a color page kept in color: the same
+/// low-contrast guard as [`autocontrast`], judged on the page's grayscale,
+/// then [`autolevel_rgb`] if asked for and [`autocontrast_preserving_tone`].
+pub fn autocontrast_rgb(page: &image::RgbImage, apply_autolevel: bool) -> image::RgbImage {
+    let (min, max) = extrema(&crate::color::to_gray(page));
+    if (max as i32 - min as i32) < 255 - 32 * 3 {
+        return page.clone();
+    }
+    let leveled = if apply_autolevel {
+        autolevel_rgb(page)
+    } else {
+        page.clone()
+    };
+    autocontrast_preserving_tone(&leveled)
 }
 
 /// `autolevelImage()` (grayscale path only — upstream's `self.color` branch
@@ -319,6 +440,82 @@ mod tests {
         assert_ne!(
             without_autolevel, with_autolevel,
             "enabling --autolevel should change the result"
+        );
+    }
+
+    #[test]
+    fn gamma_table_matches_pythons_arithmetic() {
+        // int(255 * (v / 255.) ** gamma) in Python, for each v below.
+        let values = [0usize, 1, 64, 128, 200, 254, 255];
+        let table = gamma_table(1.8);
+        assert_eq!(values.map(|v| table[v]), [0, 0, 21, 73, 164, 253, 255]);
+        let table = gamma_table(0.5);
+        assert_eq!(values.map(|v| table[v]), [0, 15, 127, 180, 225, 254, 255]);
+    }
+
+    #[test]
+    fn rgb_gamma_treats_each_channel_like_the_gray_path() {
+        let rgb = image::RgbImage::from_pixel(2, 2, image::Rgb([64, 128, 200]));
+        let out = gamma_correct_rgb(&rgb, 1.8);
+        assert_eq!(out.get_pixel(0, 0).0, [21, 73, 164]);
+        assert_eq!(gamma_correct_rgb(&rgb, 1.0), rgb);
+    }
+
+    /// Eight pixels with a clear black point (three at 10), one below it,
+    /// and three saturated colors.
+    fn small_color_image() -> image::RgbImage {
+        let pixels: [[u8; 3]; 8] = [
+            [10, 10, 10],
+            [10, 10, 10],
+            [10, 10, 10],
+            [30, 20, 10],
+            [200, 100, 50],
+            [5, 5, 5],
+            [250, 250, 250],
+            [120, 200, 90],
+        ];
+        image::RgbImage::from_fn(4, 2, |x, y| image::Rgb(pixels[(y * 4 + x) as usize]))
+    }
+
+    fn pixels(image: &image::RgbImage) -> Vec<[u8; 3]> {
+        image.pixels().map(|p| p.0).collect()
+    }
+
+    #[test]
+    fn color_autolevel_matches_upstreams_ycbcr_round_trip() {
+        // Upstream's own steps in real Pillow: to YCbCr, raise Y to the black
+        // point (10 here), back to RGB. Note the saturated pixels shifting by
+        // a level or two — that is the round trip's loss, part of the result.
+        assert_eq!(
+            pixels(&autolevel_rgb(&small_color_image())),
+            [
+                [10, 10, 10],
+                [10, 10, 10],
+                [10, 10, 10],
+                [28, 19, 8],
+                [199, 99, 49],
+                [10, 10, 10],
+                [250, 250, 250],
+                [118, 200, 88],
+            ]
+        );
+    }
+
+    #[test]
+    fn tone_preserving_autocontrast_matches_pillows() {
+        // ImageOps.autocontrast(image, preserve_tone=True) in real Pillow.
+        assert_eq!(
+            pixels(&autocontrast_preserving_tone(&small_color_image())),
+            [
+                [5, 5, 5],
+                [5, 5, 5],
+                [5, 5, 5],
+                [26, 15, 5],
+                [202, 98, 46],
+                [0, 0, 0],
+                [255, 255, 255],
+                [119, 202, 88],
+            ]
         );
     }
 }

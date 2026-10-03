@@ -22,6 +22,12 @@ pub enum Error {
     #[error("cannot build an ebook with no pages")]
     EmptyBook,
 
+    #[error("page encoding error: {0}")]
+    Encode(String),
+
+    #[error("webtoon processing error: {0}")]
+    Webtoon(String),
+
     #[error("PDF error: {0}")]
     Pdf(String),
 

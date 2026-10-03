@@ -8,18 +8,12 @@
 //! rather than transliterated, but with less of the extra GPL-boundary
 //! caution that file needs.
 //!
-//! Scope note: `ComicInfo.xml`'s per-page `Bookmarks` (`<Page Image="N"
-//! Bookmark="..."/>`) can override upstream's folder-derived chapter list
-//! entirely — this needs global-page-index bookkeeping that gets adjusted
-//! for every page a spread-split turns into two (`comic2ebook.py`'s
-//! `buildEPUB()`, the `-kcc-b`-suffix-counting loop). This project's
-//! `ebook::group_into_chapters` derives chapters from folder structure
-//! per-chapter, not from one global flat page list, and the Mangabind
-//! contract (`docs/adr/0005-mangabind-contract.md`) doesn't depend on
-//! bookmarks at all — so `ComicInfo::bookmarks` is parsed and available,
-//! but *not yet wired into chapter overriding*. Everything else
-//! (title/series/volume/number/authors/summary resolution, and
-//! `--keepcomicinfo` preservation into CBZ output) is fully implemented.
+//! `ComicInfo.xml`'s per-page bookmarks (`<Page Image="N"
+//! Bookmark="..."/>`) replace the folder-derived table of contents in EPUB
+//! output, as they do upstream — parsed here into [`ComicInfo::bookmarks`]
+//! and applied by [`crate::ebook::epub`] (see `EpubOptions::bookmarks`). A
+//! bookmark with an empty name is dropped here; upstream would list it as a
+//! blank entry.
 
 use std::path::Path;
 
@@ -40,8 +34,8 @@ pub struct ComicInfo {
     pub pencillers: Vec<String>,
     pub inkers: Vec<String>,
     pub colorists: Vec<String>,
-    /// `(page_index, bookmark_name)`, parsed but not yet consumed — see
-    /// module docs.
+    /// `(page_index, bookmark_name)`, the index counting the book's source
+    /// images from zero — see module docs.
     pub bookmarks: Vec<(u32, String)>,
 }
 
@@ -120,6 +114,16 @@ pub struct ResolvedMetadata {
     pub title: String,
     pub authors: Vec<String>,
     pub summary: Option<String>,
+    /// `ComicInfo.xml`'s `Series`, whenever it has one — whatever the title
+    /// ended up being.
+    pub series: Option<String>,
+    /// Where this book sits in [`Self::series`]: `Volume.Number`, or
+    /// whichever of the two `ComicInfo.xml` has. Only known when the title
+    /// itself was built from `ComicInfo.xml` — upstream records the volume
+    /// and number as a side effect of composing that title, so an explicit
+    /// `-t`, or `--metadatatitle title-only`, leaves the series without a
+    /// position. Reproduced as upstream behaves, not as it arguably should.
+    pub series_position: Option<String>,
 }
 
 /// `getMetadata()`'s title/author precedence. `fallback_title` is what
@@ -146,9 +150,13 @@ pub fn resolve(
         .unwrap_or_else(|| fallback_title.to_string());
     let mut authors: Vec<String> = user_author.map(|a| vec![a.to_string()]).unwrap_or_default();
     let mut summary = None;
+    let mut series = None;
+    let mut series_position = None;
+    let present = |value: &Option<String>| value.clone().filter(|v| !v.is_empty());
 
     if let Some(info) = info {
         summary = info.summary.clone();
+        series = present(&info.series);
 
         if metadata_title_mode == MetadataTitleMode::TitleOnly {
             if let Some(t) = &info.title {
@@ -171,6 +179,11 @@ pub fn resolve(
                 }
             }
             title.push_str(&suffix);
+            series_position = match (present(&info.volume), present(&info.number)) {
+                (Some(volume), Some(number)) => Some(format!("{volume}.{number}")),
+                (Some(volume), None) => Some(volume),
+                (None, number) => number,
+            };
         }
 
         if default_author {
@@ -196,6 +209,8 @@ pub fn resolve(
         title,
         authors,
         summary,
+        series,
+        series_position,
     }
 }
 
@@ -402,5 +417,44 @@ mod tests {
     fn extract_comic_info_entry_returns_none_when_absent() {
         let mut entries: Vec<crate::archive::SourceEntry> = Vec::new();
         assert_eq!(extract_comic_info_entry(&mut entries), None);
+    }
+
+    #[test]
+    fn series_is_always_reported_but_its_position_only_with_a_comicinfo_title() {
+        let info = parse_comic_info_xml(SAMPLE_XML).unwrap();
+
+        // Title built from ComicInfo.xml: the volume and number come with it.
+        let resolved = resolve(
+            Some(&info),
+            None,
+            None,
+            "fallback",
+            MetadataTitleMode::SeriesOnly,
+        );
+        assert_eq!(resolved.series.as_deref(), Some("Chainsaw Man"));
+        assert_eq!(resolved.series_position.as_deref(), Some("1.001"));
+
+        // An explicit title, or the ComicInfo title alone: upstream never
+        // records the volume and number, so the series has no position.
+        let resolved = resolve(
+            Some(&info),
+            Some("My Title"),
+            None,
+            "fallback",
+            MetadataTitleMode::SeriesOnly,
+        );
+        assert_eq!(resolved.series.as_deref(), Some("Chainsaw Man"));
+        assert_eq!(resolved.series_position, None);
+        let resolved = resolve(
+            Some(&info),
+            None,
+            None,
+            "fallback",
+            MetadataTitleMode::TitleOnly,
+        );
+        assert_eq!(resolved.series_position, None);
+
+        let resolved = resolve(None, None, None, "fallback", MetadataTitleMode::SeriesOnly);
+        assert_eq!((resolved.series, resolved.series_position), (None, None));
     }
 }

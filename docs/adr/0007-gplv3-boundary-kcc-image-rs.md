@@ -56,6 +56,20 @@ the repo-level ISC notice definitely covers them.
 Every module doc comment in `mangapress-core` that ports KCC behavior
 should note which upstream file it's based on and flag GPL-boundary files
 explicitly (already done for `resize.rs`, `contrast.rs`,
-`pipeline/spread.rs`, `rainbow.rs`, `quantize.rs`) — that repetition is
+`pipeline/spread.rs`, `rainbow.rs`, `quantize.rs`, and since then
+`color.rs`, `webtoon.rs` and `ebook/cover.rs`) — that repetition is
 intentional so no future contributor porting new behavior misses this
 distinction.
+
+Two later additions stay inside this boundary and are worth naming, since
+they look at first as if they might not:
+
+- `tools/parity` (ADR 0013) runs KCC's own code, GPLv3 files included, to
+  compare its output with mangapress's. It imports KCC from a checkout the
+  user makes and calls it. Nothing of KCC's is copied into this repository
+  or shipped in the binary; the check is a development tool, not part of
+  the program.
+- `resample.rs`, and the dither in `quantize.rs`, reproduce Pillow's
+  arithmetic to the bit, because that is what KCC's results are made of.
+  Pillow is not KCC and is not under the GPL: its license is permissive,
+  and following it closely raises none of the questions above.

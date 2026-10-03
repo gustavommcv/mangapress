@@ -78,7 +78,7 @@ Version 1 issue codes are:
 | `no_page_images` | `inspect` | No recognized image entries remain |
 | `source_already_converted` | `inspect` | The pages carry KCC's own file names; converting again loses quality |
 | `images_smaller_than_device` | `inspect` | Over a quarter of the pages are smaller than the screen and nothing enlarges them |
-| `cover_read_failed` | `inspect` | The `--cover` image could not be read |
+| `cover_read_failed` | `inspect` | The cover image — `--cover`, or the one found in a `Covers` folder beside the input — could not be read |
 | `metadata_parse_failed` | `metadata` | ComicInfo.xml is invalid or unreadable |
 | `output_collision` | `plan` | The chosen output would overwrite the input; a safe name is used |
 | `output_directory_create_failed` | `write` | The output directory could not be created |

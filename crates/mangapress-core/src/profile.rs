@@ -4,6 +4,8 @@
 //! Transcribed from `kindlecomicconverter/image.py`'s `ProfileData` class
 //! (KCC upstream, commit `ea532c709b72a994fd9219c3bb7cd3f1df08027b`), which
 //! is the closest thing to a spec for "what resolution does device X want."
+//! Compared again with KCC 12.0.0's table: the same 41 profiles, with the
+//! same names, resolutions and palettes.
 //! Every profile in upstream ships gamma `1.0`, so gamma correction is only
 //! ever a no-op unless the user explicitly overrides it (`-g/--gamma`).
 

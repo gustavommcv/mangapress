@@ -70,7 +70,9 @@ doesn't, contrast stretched on one side only — is several levels, or a differe
 ## Where mangapress differs on purpose
 
 Two things KCC does for the sake of Amazon's own converter and reader, which mangapress — made
-for books read in KOReader — leaves out. Neither can show up as a difference here.
+for books read in KOReader — leaves out. Neither can show up as a difference here. The complete
+list of deliberate differences, with the reasons, is in
+[ADR 0013](../../docs/adr/0013-follow-a-named-kcc-release.md).
 
 - A quantized page (`--forcepng`) is a GIF in KCC for a Kindle profile's EPUB. mangapress writes
   a palette PNG on every device: the same pixels, in a smaller file.

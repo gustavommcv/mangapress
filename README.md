@@ -81,6 +81,12 @@ mangapress at that version declared the first page as the cover instead. It has 
 separate cover the way KCC does, so that a first page that gets cropped, split or rotated doesn't
 take the cover with it.
 
+That comparison has not been repeated with KCC 12. What has been measured since is mangapress
+against itself, after the work that made its pages match KCC 12.0.0's exactly: on a 432-page
+volume, on a four-core laptop (Ryzen 5 3500U, Kindle 11 profile, EPUB), a conversion went from
+8.7 s in v0.6.0 to 10.1 s when no page needs resizing, and from 15.7 s to 12.2 s with `--upscale`,
+where every page is enlarged.
+
 ## Install
 
 **macOS/Linux:**
@@ -130,7 +136,13 @@ mangapress /path/to/volume.cbz --profile KV --format epub
 The input can be a `.cbz` file or a folder of chapter subfolders (the layout
 [Mangabind](https://github.com/gustavommcv/mangabind) produces — see
 [docs/adr/0005-mangabind-contract.md](docs/adr/0005-mangabind-contract.md)). If `--output` isn't
-given, the result is written next to the input with the right extension for `--format`.
+given, the result is written next to the input with the right extension for `--format` — for a
+Kobo profile's EPUB that is `.kepub.epub`, which Kobo's own reader wants (`--nokepub` for a plain
+`.epub`).
+
+mangapress warns, and carries on, when over a quarter of the pages are smaller than the device's
+screen and nothing enlarges them (`--upscale`, `--stretch`), and when the pages look like KCC
+already converted them once.
 
 A few of the more commonly used flags:
 
@@ -142,6 +154,11 @@ A few of the more commonly used flags:
 - `--cropping <disabled|margins|margins-and-page-numbers>` — margin detection, with or without
   page-number-aware trimming (default: both).
 - `--splitter <split|rotate|both>` — how to handle double-page spreads.
+- `--upscale` — enlarge pages smaller than the screen to fit it. Off by default, as in KCC's
+  command line.
+- `--webtoon` — for long vertical strips: join each chapter's images and cut them into
+  screen-sized pages between panels, not across them.
+- `--forcecolor` — keep color pages in color (see "Color output is opt-in" above).
 - `--eraserainbow` — attenuate Moire interference between halftone screentone and a color e-ink
   (Kaleido-style) panel's diagonal subpixel grid. A display-artifact fix, not color output (for
   that, see `--forcecolor` above).
@@ -160,9 +177,14 @@ A few of the more commonly used flags:
   [docs/adr/0012-nested-toc-for-combined-volumes.md](docs/adr/0012-nested-toc-for-combined-volumes.md).
 
 Run `mangapress --help` for the full list, including cropping-aggressiveness tuning
-(`--croppingpower`, `--croppingminimum`, `--preservemargin`), resize behavior (`--upscale`,
-`--stretch`, `--wallpaper`, `--whiteborders`), and metadata overrides (`--title`, `--author`,
-`--metadatatitle`, `--language`).
+(`--croppingpower`, `--croppingminimum`, `--preservemargin`, `--ipc`), resize behavior
+(`--stretch`, `--wallpaper`, `--blackborders`, `--whiteborders`), contrast (`--gamma`,
+`--autolevel`, `--noautocontrast`, `--colorautocontrast`), what becomes of a double-page spread
+(`--norotate`, `--rotatefirst`, `--rotateright`, `--maximizestrips`), how pages sit in a two-page
+view (`--invertdirection`, `--spreadshift`, `--onepagelandscape`), the cover (`--smartcovercrop`,
+`--coverfill`), the PNG variants (`--pnglegacy`, `--noquantize`, `--force-png-rgb`),
+`--noprocessing` to package images untouched, and metadata overrides (`--title`, `--author`,
+`--metadatatitle`, `--language`). The names are KCC's wherever the option means the same thing.
 
 ### Machine-readable integration
 
@@ -190,8 +212,9 @@ ISC-licensed repo) are treated as algorithm documentation to reimplement indepen
 to port.
 
 Given the same pages and options, mangapress is meant to produce the pages KCC 12.0.0 does, and
-[tools/parity](tools/parity/README.md) checks that it does. Where it differs, it is on purpose,
-and because mangapress is made for books read in KOReader rather than by Amazon's own reader:
+[tools/parity](tools/parity/README.md) checks that it does. Where it differs, it is on purpose —
+[ADR 0013](docs/adr/0013-follow-a-named-kcc-release.md) has the whole list and the reasons — and
+mostly because mangapress is made for books read in KOReader rather than by Amazon's own reader:
 
 - No MOBI/AZW3, and none of what KCC does only for Amazon's converter: no Panel View, no page
   splitting for the Kindle Scribe.
@@ -203,6 +226,11 @@ and because mangapress is made for books read in KOReader rather than by Amazon'
   folder is not itself counted as a book when the input is a folder.
 - Only `.cbz` and folders are read — no `.cbr`, `.cb7`, PDF or EPUB input, which is what lets
   mangapress be one binary with nothing else to install.
+- Grouping chapters into volumes and splitting volumes by size are left to
+  [Mangabind](https://github.com/gustavommcv/mangabind).
+- No WebP output yet. It was measured — about 38% smaller than JPEG at the same quality setting,
+  with higher fidelity, and slower to decode — and deferred:
+  [ADR 0014](docs/adr/0014-webp-output-deferred.md).
 
 ## License
 

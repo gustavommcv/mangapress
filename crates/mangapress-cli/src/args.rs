@@ -1,8 +1,9 @@
-//! CLI surface for v1. Deliberately a subset of `kcc-c2e.py`'s full flag
-//! list (see the KCC research notes for the complete upstream inventory) —
-//! only what's needed for the EPUB/CBZ/PDF-out, `.cbz`/folder-in scope
-//! this project actually targets. Flags are added as their backing feature
-//! gets implemented in `mangapress-core`, not preemptively.
+//! The command line. KCC 12.0.0's own options, under KCC's names where they
+//! mean the same thing, minus the ones left out on purpose (MOBI, Panel
+//! View, other input formats, volume grouping and splitting — the list and
+//! the reasons are in `docs/adr/0013-follow-a-named-kcc-release.md`), plus
+//! this tool's own (`--json-events`, `--dry-run`, `--nested-toc`, `--cover`,
+//! `--list-profiles`).
 
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
@@ -91,8 +92,9 @@ pub struct Cli {
     #[arg(long)]
     pub blackborders: bool,
 
-    /// Disable autodetection and force white borders instead of padding
-    /// with the page's detected background color (CBZ/PDF output only).
+    /// Disable autodetection and force white borders: CBZ/PDF pages are not
+    /// padded with the page's detected background color, and the page
+    /// background in an EPUB is white even for a dark page.
     #[arg(long)]
     pub whiteborders: bool,
 

@@ -1,9 +1,10 @@
-//! Archive input/output. v1 scope is `.cbz` (a plain ZIP) and bare folders
+//! Archive input/output. The scope is `.cbz` (a plain ZIP) and bare folders
 //! of images only — matching the actual Mangabind->mangapress contract
-//! (see `docs/adr/0005-mangabind-contract.md`). CBR/7z/RAR input is
-//! explicitly out of scope for now: KCC itself hard-requires the external
-//! `7z` binary for those with no pure-Python fallback, and the `zip` crate
-//! gives us a pure-Rust path for the one format that actually matters here.
+//! (see `docs/adr/0005-mangabind-contract.md`). CBR/7z/RAR input is out of
+//! scope on purpose (`docs/adr/0013-follow-a-named-kcc-release.md`): KCC
+//! itself hard-requires the external `7z` binary for those with no
+//! pure-Python fallback, and the `zip` crate gives us a pure-Rust path for
+//! the one format that actually matters here.
 
 pub mod cbz;
 pub mod folder;

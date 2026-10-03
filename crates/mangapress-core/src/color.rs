@@ -1,5 +1,5 @@
-//! What a source page's colors mean for a grayscale pipeline: how an RGB
-//! page becomes gray, and whether upstream would call the page a color page.
+//! What a source page's colors mean to the pipeline: how an RGB page
+//! becomes gray, and whether upstream would call the page a color page.
 //!
 //! Port targets, both in KCC's `image.py` (GPLv3 upstream — reimplemented
 //! from documented/observed behavior, not copied; see
@@ -10,11 +10,12 @@
 //! - `colorCheck()` / `calculate_color()`, the per-page heuristic deciding
 //!   whether a page has meaningful color at all.
 //!
-//! Output stays grayscale regardless (`docs/adr/0010-color-output-deferred.md`),
-//! but upstream's color verdict still changes what happens to a page that
-//! *ends up* gray: a color page is never autocontrasted (short of
-//! `--colorautocontrast`, which doesn't exist here), and a color first page —
-//! a cover — is never cropped. Both were missing here before this module
+//! A page is kept in color only with `--forcecolor`, and only if that
+//! verdict calls it a color page. But the verdict also changes what happens
+//! to a page that *ends up* gray, which is every page by default: a color
+//! page is not autocontrasted (short of `--colorautocontrast`), and a color
+//! first page — a cover — is never cropped. Both were missing here before
+//! this module
 //! existed: on a real 432-page black-and-white volume upstream flags 35
 //! pages as color (covers, tinted scans), and those came out a mean 9 gray
 //! levels (worst page: 18) away from upstream's because they were being

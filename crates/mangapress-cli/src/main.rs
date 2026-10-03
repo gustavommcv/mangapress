@@ -5,7 +5,9 @@ use anyhow::{bail, Context};
 use args::{Cli, Cropping, Format, InterPanelCrop, MetadataTitle, Splitter};
 use clap::{error::ErrorKind, Parser};
 use mangapress_core::archive::{cbz::extract_cbz, folder::read_folder, SourceEntry};
-use mangapress_core::ebook::{cbz_out, cover, epub, group_into_chapters, pdf, Chapter, Page};
+use mangapress_core::ebook::{
+    cbz_out, cover, epub, group_into_chapters, pdf, spreads, Chapter, Page,
+};
 use mangapress_core::manga::ReadingDirection;
 use mangapress_core::metadata::{self, MetadataTitleMode};
 use mangapress_core::pipeline::{
@@ -152,6 +154,65 @@ fn utc_timestamp(now: std::time::SystemTime) -> String {
         second_of_day % 3_600 / 60,
         second_of_day % 60
     )
+}
+
+/// The spread labels upstream's "Label Spreads" window leaves beside a
+/// source: a file named like the source plus `.json`.
+fn spread_labels_beside(input: &Path) -> Option<PathBuf> {
+    // Rebuilt from its components so that a trailing separator on a folder
+    // doesn't end up in the middle of the name.
+    let mut name = input.components().collect::<PathBuf>().into_os_string();
+    name.push(".json");
+    let path = PathBuf::from(name);
+    path.is_file().then_some(path)
+}
+
+/// The positions in a spread-label file: `{"spreads": [12, 40]}`.
+fn read_spread_labels(path: &Path) -> Result<Vec<usize>, String> {
+    let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    let positions = value
+        .get("spreads")
+        .and_then(|spreads| spreads.as_array())
+        .ok_or_else(|| "it has no \"spreads\" list".to_string())?;
+    positions
+        .iter()
+        .map(|position| {
+            position
+                .as_u64()
+                .map(|position| position as usize)
+                .ok_or_else(|| format!("{position} is not a page position"))
+        })
+        .collect()
+}
+
+/// One recoverable problem, as a protocol event or a line on the terminal.
+fn warn<W: std::io::Write + Send>(
+    events: &EventSink<W>,
+    code: &str,
+    stage: &str,
+    path: &str,
+    message: &str,
+) -> anyhow::Result<()> {
+    if events.enabled() {
+        events
+            .emit(
+                "warning",
+                json!({
+                    "severity": "warning",
+                    "code": code,
+                    "stage": stage,
+                    "path": path,
+                    "recoverable": true,
+                    "message": message,
+                }),
+            )
+            .map_err(event_write_failure)?;
+    } else {
+        eprintln!("warning: {message}");
+    }
+    Ok(())
 }
 
 /// The folder a book's own cover is looked for in, beside the book.
@@ -777,7 +838,97 @@ fn run<W: std::io::Write + Send>(
         None => None,
     };
 
-    let source_chapters = group_into_chapters(source_entries);
+    let mut source_chapters = group_into_chapters(source_entries);
+
+    // Pages labelled as the two halves of a spread — in the file `--spreads`
+    // names, or else the one upstream's "Label Spreads" leaves beside the
+    // input — are joined before anything looks at them, the cover included.
+    let spread_labels = cli
+        .spreads
+        .clone()
+        .map(|path| (path, true))
+        .or_else(|| spread_labels_beside(&input).map(|path| (path, false)));
+    let mut joined_spreads = spreads::Joined::default();
+    if let Some((path, named)) = spread_labels {
+        match read_spread_labels(&path) {
+            Ok(positions) => {
+                let right_to_left = cli.manga_style && !cli.webtoon;
+                joined_spreads = match spreads::join_labelled_spreads(
+                    &mut source_chapters,
+                    &positions,
+                    right_to_left,
+                ) {
+                    Ok(joined) => joined,
+                    Err(error) => {
+                        *failure = RunFailure::new(
+                            "spread_join_failed",
+                            "inspect",
+                            true,
+                            "Couldn't join the pages labelled as a spread.",
+                            format!("joining labelled spreads: {error}"),
+                        )
+                        .with_path(absolute_display(&path));
+                        bail!("joining labelled spreads: {error}");
+                    }
+                };
+                if !quiet && !joined_spreads.joined.is_empty() {
+                    eprintln!(
+                        "joined {} labelled spread(s) from {}",
+                        joined_spreads.joined.len(),
+                        path.display()
+                    );
+                }
+                if !joined_spreads.skipped.is_empty() {
+                    let reasons: Vec<String> = joined_spreads
+                        .skipped
+                        .iter()
+                        .map(|(position, reason)| match reason {
+                            spreads::Skipped::NoPageAfter => {
+                                format!("{position} has no page after it")
+                            }
+                            spreads::Skipped::PartOfPreviousPair => {
+                                format!("{position} is already the second half of a pair")
+                            }
+                        })
+                        .collect();
+                    warn(
+                        events,
+                        "spread_labels_skipped",
+                        "inspect",
+                        &absolute_display(&path),
+                        &format!(
+                            "Some labelled spreads could not be joined: position {}.",
+                            reasons.join("; position ")
+                        ),
+                    )?;
+                }
+            }
+            Err(reason) if named => {
+                *failure = RunFailure::new(
+                    "spread_labels_read_failed",
+                    "inspect",
+                    true,
+                    "Couldn't read the spread labels.",
+                    format!("reading spread labels {}: {reason}", path.display()),
+                )
+                .with_path(absolute_display(&path));
+                bail!("reading spread labels {}: {reason}", path.display());
+            }
+            // A file that merely happens to sit beside the input and isn't
+            // spread labels is not this book's problem.
+            Err(reason) => warn(
+                events,
+                "spread_labels_ignored",
+                "inspect",
+                &absolute_display(&path),
+                &format!(
+                    "Ignored {}: it is not a list of spread labels ({reason}).",
+                    path.display()
+                ),
+            )?,
+        }
+    }
+
     // The cover is made from the book's first image as it came, apart from
     // whatever page processing does to that image later.
     // Webtoon mode has no separate cover upstream (its first image is a
@@ -1279,9 +1430,19 @@ fn run<W: std::io::Write + Send>(
                 spread_shift: cli.spreadshift,
                 one_page_landscape: cli.onepagelandscape,
                 cover: cover.as_ref().map(|(bytes, _)| bytes.clone()),
+                // A bookmark counts source pages; joining spreads moved
+                // the ones after each pair up by one.
                 bookmarks: comic_info
                     .as_ref()
-                    .map(|info| info.bookmarks.clone())
+                    .map(|info| {
+                        info.bookmarks
+                            .iter()
+                            .map(|(page, title)| {
+                                let page = joined_spreads.position_after(*page as usize);
+                                (page as u32, title.clone())
+                            })
+                            .collect()
+                    })
                     .unwrap_or_default(),
                 series: resolved.series.map(|name| (name, resolved.series_position)),
                 modified: utc_timestamp(std::time::SystemTime::now()),
@@ -1461,6 +1622,51 @@ mod tests {
         let found = cover_by_convention(&dir.path().join(book))?;
         assert_eq!(found.parent().unwrap(), dir.path().join(COVERS_FOLDER));
         Some(found.file_name().unwrap().to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn spread_labels_are_looked_for_under_the_inputs_own_name_plus_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Vol 1.cbz");
+        let folder = dir.path().join("Vol 2");
+        std::fs::write(&file, b"x").unwrap();
+        std::fs::create_dir(&folder).unwrap();
+        assert_eq!(spread_labels_beside(&file), None);
+
+        std::fs::write(dir.path().join("Vol 1.cbz.json"), b"{}").unwrap();
+        std::fs::write(dir.path().join("Vol 2.json"), b"{}").unwrap();
+        assert_eq!(
+            spread_labels_beside(&file),
+            Some(dir.path().join("Vol 1.cbz.json"))
+        );
+        assert_eq!(
+            spread_labels_beside(&folder),
+            Some(dir.path().join("Vol 2.json"))
+        );
+        // A trailing separator on the folder changes nothing.
+        let with_separator = PathBuf::from(format!("{}/", folder.display()));
+        assert_eq!(
+            spread_labels_beside(&with_separator),
+            Some(dir.path().join("Vol 2.json"))
+        );
+    }
+
+    #[test]
+    fn spread_labels_are_a_list_of_page_positions_under_spreads() {
+        let dir = tempfile::tempdir().unwrap();
+        let read = |text: &str| {
+            let path = dir.path().join("labels.json");
+            std::fs::write(&path, text).unwrap();
+            read_spread_labels(&path)
+        };
+        assert_eq!(read(r#"{"spreads": [12, 40]}"#), Ok(vec![12, 40]));
+        assert_eq!(read(r#"{"spreads": []}"#), Ok(vec![]));
+        // Anything else is refused rather than guessed at.
+        assert!(read(r#"{"pages": [1]}"#).is_err());
+        assert!(read(r#"{"spreads": [1, -2]}"#).is_err());
+        assert!(read(r#"{"spreads": ["3"]}"#).is_err());
+        assert!(read("not json").is_err());
+        assert!(read_spread_labels(&dir.path().join("missing.json")).is_err());
     }
 
     #[test]

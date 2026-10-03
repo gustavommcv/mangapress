@@ -156,16 +156,18 @@ pub struct Cli {
     #[arg(long)]
     pub noprocessing: bool,
 
-    /// Turn pages the opposite way to the reading order.
+    /// Turn pages the opposite way to the reading order. For readers that
+    /// take the direction from the book; KOReader has its own setting.
     #[arg(long)]
     pub invertdirection: bool,
 
     /// Start the book on the opposite side of a two-page (landscape) view,
-    /// to line double-page spreads up.
+    /// to line double-page spreads up. KOReader ignores it.
     #[arg(long)]
     pub spreadshift: bool,
 
-    /// Show a single centered page in a two-page (landscape) view.
+    /// Show a single centered page in a two-page (landscape) view. KOReader
+    /// ignores it.
     #[arg(long)]
     pub onepagelandscape: bool,
 
@@ -182,6 +184,15 @@ pub struct Cli {
     /// image is the cover of the Nth book beside the input.
     #[arg(long)]
     pub cover: Option<PathBuf>,
+
+    /// Join pairs of pages that are the two halves of one double-page
+    /// spread into a single image before anything else is done to them.
+    /// FILE is JSON as KCC's "Label Spreads" writes it — {"spreads": [12,
+    /// 40]} — each number the position, counting from 0 over the whole
+    /// book, of the first page of a pair. Without this, a file named like
+    /// the input plus ".json" beside it is used if there is one.
+    #[arg(long, value_name = "FILE")]
+    pub spreads: Option<PathBuf>,
 
     /// Cut the front cover out of a wide first image (a jacket or spread
     /// scan) for the book's cover, instead of using the whole image.

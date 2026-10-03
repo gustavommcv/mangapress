@@ -144,6 +144,11 @@ A few of the more commonly used flags:
   folder named `Covers` beside the input is looked in: an image there named like the input
   (`Covers/Vol 3.jpg` for `Vol 3.cbz`) is its cover; if no image there is named after a book, the
   Nth image is the cover of the Nth book beside the input, as in KCC.
+- `--spreads <FILE>` — join pages that are the two halves of one double-page spread, stored as
+  separate images, back into one before anything else is done to them. The file is JSON listing
+  the position (counting from 0) of the first page of each pair: `{"spreads": [12, 40]}`. That is
+  the file KCC's "Label Spreads" window writes, and without the option one named like the input
+  plus `.json` beside it is used.
 - `--keepcomicinfo` — carry the source's `ComicInfo.xml` through into `.cbz` output.
 - `--nested-toc` — build a two-level table of contents (a volume entry, its chapters nested
   underneath) instead of the usual flat, one-entry-per-chapter list. For an input whose chapter
@@ -153,14 +158,16 @@ A few of the more commonly used flags:
   [docs/adr/0012-nested-toc-for-combined-volumes.md](docs/adr/0012-nested-toc-for-combined-volumes.md).
 
 Run `mangapress --help` for the full list, including cropping-aggressiveness tuning
-(`--croppingpower`, `--croppingminimum`, `--preservemargin`, `--ipc`), resize behavior
-(`--stretch`, `--wallpaper`, `--blackborders`, `--whiteborders`), contrast (`--gamma`,
-`--autolevel`, `--noautocontrast`, `--colorautocontrast`), what becomes of a double-page spread
-(`--norotate`, `--rotatefirst`, `--rotateright`, `--maximizestrips`), how pages sit in a two-page
-view (`--invertdirection`, `--spreadshift`, `--onepagelandscape`), the cover (`--smartcovercrop`,
+(`--croppingpower`, `--croppingminimum`, `--preservemargin`, `--ipc`), resize behavior (`--stretch`,
+`--wallpaper`, `--blackborders`, `--whiteborders`), contrast (`--gamma`, `--autolevel`,
+`--noautocontrast`, `--colorautocontrast`), what becomes of a double-page spread (`--norotate`,
+`--rotatefirst`, `--rotateright`, `--maximizestrips`), how pages sit in a two-page view
+(`--invertdirection`, `--spreadshift`, `--onepagelandscape` — for readers that lay out fixed-layout
+spreads, like Kobo's and Kindle's own; KOReader ignores them), the cover (`--smartcovercrop`,
 `--coverfill`), the PNG variants (`--pnglegacy`, `--noquantize`, `--force-png-rgb`),
 `--noprocessing` to package images untouched, and metadata overrides (`--title`, `--author`,
-`--metadatatitle`, `--language`). The names are KCC's wherever the option means the same thing.
+`--metadatatitle`, `--language`). The names are KCC's wherever the option means the same thing; one
+takes a different unit — `--croppingminimum` is a percentage here and a fraction in KCC.
 
 ### Machine-readable integration
 
@@ -206,9 +213,9 @@ mostly because mangapress is made for books read in KOReader rather than by Amaz
   mangapress be one binary with nothing else to install.
 - Grouping chapters into volumes and splitting volumes by size are left to
   [Mangabind](https://github.com/gustavommcv/mangabind).
-- No WebP output yet. It was measured — about 38% smaller than JPEG at the same quality setting,
-  with higher fidelity, and slower to decode — and deferred:
-  [ADR 0014](docs/adr/0014-webp-output-deferred.md).
+- No WebP output yet, and no repacked (mozJPEG-style) JPEG. WebP was measured — about 38% smaller
+  than JPEG at the same quality setting, with higher fidelity, and slower to decode — and both
+  are deferred: [ADR 0014](docs/adr/0014-webp-output-deferred.md).
 
 ## License
 

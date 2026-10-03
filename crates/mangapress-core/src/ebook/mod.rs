@@ -11,6 +11,7 @@ pub mod cbz_out;
 pub mod cover;
 pub mod epub;
 pub mod pdf;
+pub mod spreads;
 
 use crate::archive::SourceEntry;
 use std::path::PathBuf;

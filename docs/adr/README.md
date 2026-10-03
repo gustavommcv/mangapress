@@ -13,4 +13,4 @@
 11. [Add a versioned JSON Lines event stream](0011-versioned-json-lines-events.md)
 12. [A two-level table of contents for a combined series, EPUB only](0012-nested-toc-for-combined-volumes.md)
 13. [Follow a named KCC release exactly, and leave out what exists only for Amazon's converter](0013-follow-a-named-kcc-release.md)
-14. [Defer WebP output](0014-webp-output-deferred.md)
+14. [Defer WebP output, and smaller JPEG](0014-webp-output-deferred.md)

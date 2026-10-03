@@ -71,6 +71,9 @@ deliberate, and is also written down where the code makes it:
 | Chapters are keyed by their full path | Fixes a title collision in KCC (ADR 0005). |
 | A cover in the `Covers` folder can be matched by name; `Covers` is not counted as a book | Position alone hands a book without a cover its neighbor's, and KCC counts the folder itself when the input is a folder. |
 | An output that would overwrite its input is named `… (mangapress)` | KCC's `_kccN`, under this tool's name. |
+| `--croppingminimum` is a percentage (`90`); KCC's is a fraction (`0.9`) | The same threshold, written the way `--preservemargin` already is in both tools. The option names need not be KCC's twin where the behavior is. |
+| Pages labelled as the halves of a spread (`--spreads`, or KCC's `<input>.json`) are joined without flattening the book; KCC drops every chapter when it joins | The table of contents survives. For two pages of the same size the joined image is KCC's, pixel for pixel. |
+| Two labelled pages of different sizes are placed side by side whole; a label that cannot be used is skipped with a warning | KCC cuts or overlaps the pages in the first case and stops with an error in the second. |
 | The book's identifier is derived from the book (a version 5 UUID); KCC draws a random one per conversion | Converting the same book again gives the same identifier, which is what EPUB 3 asks of one. |
 | With no author anywhere, the author is `Unknown`; KCC writes `KCC` | The converter is not the author. |
 | The rainbow eraser differs by a few gray levels at an odd width or height | KCC rebuilds the spectrum assuming an even width. No built-in profile is odd; only a custom resolution reaches it. |
@@ -83,14 +86,18 @@ deliberate, and is also written down where the code makes it:
   input, one book", which the machine protocol (ADR 0011) relies on.
 - `--delete`: a tool that others drive should not delete its source.
 - `--lightnovel` and the PDF/EPUB input options: follow from the input formats above.
-- `--mozjpeg`: a C library, for a lossless repack of each JPEG. Not measured itself; optimized
-  progressive JPEG, the nearest thing measured, was 6% smaller and took about three times as long
-  to decode on a desktop.
-- `--webp`: wanted, not yet — ADR 0014.
+- `--mozjpeg` and `--webp`: smaller pages. Wanted, not yet — both are in ADR 0014.
 
 **When KCC makes a release**, check out its tag and run the parity check. Every difference it
 reports is either a change in KCC to follow — code, tests, and `REFERENCE_KCC` in
 `tools/parity/parity.py` — or a deliberate difference to add to the table above.
+
+**Three options are written into the EPUB as KCC writes them and do nothing in KOReader:**
+`--spreadshift`, `--onepagelandscape` and `--invertdirection` set which side of a two-page view
+each page takes and the direction pages turn. KOReader's engine does not read those properties
+(checked: the same book renders identically with and without each of them, and the page-turn
+direction there is a setting of the reader's own). They are kept for the readers that do — Kobo's
+and Kindle's own, and EPUB readers in general.
 
 ## Consequences
 

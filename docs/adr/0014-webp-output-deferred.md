@@ -1,4 +1,4 @@
-# 14. Defer WebP output
+# 14. Defer WebP output, and smaller JPEG
 
 ## Status
 
@@ -69,10 +69,25 @@ What the numbers say:
 - How the pages look. The fidelity figures are arithmetic, not a judgment made on an e-ink screen.
 - Which readers other than KOReader open WebP inside an EPUB.
 
+### The other way to a smaller file: the same JPEG, packed better
+
+KCC also has `--mozjpeg`, which rewrites each JPEG without changing a pixel — optimized Huffman
+tables and progressive scans — through a C library. Its window promises a file 10-20% smaller for
+twice the processing time. That was not measured. What was, on the same pages, is what a
+pure-Rust encoder could do along the same lines:
+
+- optimized Huffman tables alone: about 3% smaller (12 pages), and no slower to decode;
+- optimized and progressive: 6% smaller (the table above), and about three times as slow to
+  decode on a desktop.
+
+It needs no reader support and loses nothing, which WebP cannot say; it also saves a small
+fraction of what WebP does.
+
 ## Decision
 
 Not now. WebP output is a future feature, and not part of the release that follows the KCC 12
-parity work (ADR 0013).
+parity work (ADR 0013). The same goes for a smaller JPEG: deferred with it, as the cheaper and
+smaller of two answers to the same wish.
 
 The saving is real and the fidelity is not in doubt. What is undecided is everything that makes
 it a feature rather than a measurement, and each of these needs an answer first:

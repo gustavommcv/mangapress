@@ -96,9 +96,8 @@ pub struct Cli {
     #[arg(long)]
     pub whiteborders: bool,
 
-    /// Quantize to the device profile's grayscale palette (dithered) instead
-    /// of full-tone JPEG, stored as KCC stores it: GIF for a Kindle profile's
-    /// EPUB, PNG otherwise.
+    /// Quantize to the device profile's grayscale palette (dithered) and
+    /// save PNG instead of full-tone JPEG.
     #[arg(long)]
     pub forcepng: bool,
 
@@ -176,6 +175,9 @@ pub struct Cli {
     /// Use this image as the book's cover instead of the first page. It is
     /// processed like any cover (contrast, grayscale unless --forcecolor,
     /// fitted to the device) and, in a CBZ, stored as the first image.
+    /// Without this, a folder named "Covers" beside the input is looked in:
+    /// an image there named like the input is its cover, or else the Nth
+    /// image is the cover of the Nth book beside the input.
     #[arg(long)]
     pub cover: Option<PathBuf>,
 

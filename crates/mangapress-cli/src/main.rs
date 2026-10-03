@@ -154,6 +154,100 @@ fn utc_timestamp(now: std::time::SystemTime) -> String {
     )
 }
 
+/// The folder a book's own cover is looked for in, beside the book.
+const COVERS_FOLDER: &str = "Covers";
+
+/// The cover a `Covers` folder beside `input` holds for it, if any —
+/// upstream's convention for giving each volume of a series its own cover
+/// without naming one on the command line.
+///
+/// Upstream matches by position alone: the folder's Nth image, in natural
+/// order, goes to the Nth book beside it. That is kept, with two changes:
+/// - An image named like the book (`Vol 3.jpg` for `Vol 3.cbz`) is that
+///   book's cover, wherever it sorts. And once any image in the folder is
+///   named after a book, position is not used at all: a book without an
+///   image of its own then has no custom cover, rather than the cover of
+///   whichever book happens to line up with it.
+/// - What counts as "a book beside it" is the input's own kind: files with
+///   its extension, or — for a folder — the other folders, leaving out
+///   `Covers` itself (which upstream counts, giving every folder that sorts
+///   after it the next book's cover). Earlier conversions' output (`_kcc`
+///   in the name, as upstream skips, and this tool's own ` (mangapress`)
+///   doesn't count either.
+fn cover_by_convention(input: &Path) -> Option<PathBuf> {
+    let input = std::path::absolute(input).ok()?;
+    let parent = input.parent()?;
+    let covers_dir = parent.join(COVERS_FOLDER);
+    if !covers_dir.is_dir() {
+        return None;
+    }
+    let names_in = |dir: &Path, keep: &dyn Fn(&Path) -> bool| -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| keep(path))
+            .filter_map(|path| Some(path.file_name()?.to_string_lossy().into_owned()))
+            .collect();
+        names.sort_by(|a, b| mangapress_core::natural_sort::compare(a, b));
+        names
+    };
+
+    let covers = names_in(&covers_dir, &|path| {
+        path.is_file() && mangapress_core::archive::has_image_extension(path)
+    });
+
+    let is_folder = input.is_dir();
+    let extension = input.extension().map(|e| e.to_ascii_lowercase());
+    let books = names_in(parent, &|path| {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if name.contains("_kcc") || name.contains(" (mangapress") {
+            return false;
+        }
+        if is_folder {
+            path.is_dir() && name != COVERS_FOLDER
+        } else {
+            path.is_file() && path.extension().map(|e| e.to_ascii_lowercase()) == extension
+        }
+    });
+
+    // A folder's name is its title whole; a file's, without the extension.
+    let book_title = |name: &str| -> String {
+        if is_folder {
+            name.to_lowercase()
+        } else {
+            Path::new(name)
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase()
+        }
+    };
+    let cover_title = |name: &str| -> String {
+        Path::new(name)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase()
+    };
+
+    let name = input.file_name()?.to_string_lossy().into_owned();
+    let title = book_title(&name);
+    if let Some(cover) = covers.iter().find(|cover| cover_title(cover) == title) {
+        return Some(covers_dir.join(cover));
+    }
+    let named_after_books = covers.iter().any(|cover| {
+        let cover = cover_title(cover);
+        books.iter().any(|book| book_title(book) == cover)
+    });
+    if named_after_books {
+        return None;
+    }
+    let position = books.iter().position(|book| *book == name)?;
+    covers.get(position).map(|cover| covers_dir.join(cover))
+}
+
 /// What `--format auto` means for a device: upstream's own defaults, except
 /// that a Kindle gets EPUB where upstream would go on to MOBI (which this
 /// tool doesn't write).
@@ -655,9 +749,17 @@ fn run<W: std::io::Write + Send>(
         }
     }
 
-    // A cover of the user's own choosing, read now so that a bad path fails
-    // before any page is processed.
-    let custom_cover: Option<Vec<u8>> = match &cli.cover {
+    // A cover of the user's own choosing — named with `--cover`, or else
+    // found in a `Covers` folder beside the input — read now so that a bad
+    // path fails before any page is processed.
+    let cover_path = cli.cover.clone().or_else(|| {
+        let found = cover_by_convention(&input)?;
+        if !quiet {
+            eprintln!("using {} as the cover", found.display());
+        }
+        Some(found)
+    });
+    let custom_cover: Option<Vec<u8>> = match &cover_path {
         Some(path) => match std::fs::read(path) {
             Ok(bytes) => Some(bytes),
             Err(error) => {
@@ -1336,6 +1438,94 @@ mod tests {
             sanitize_filename("Chainsaw Man - Vol.01"),
             "Chainsaw Man - Vol.01"
         );
+    }
+
+    /// A series folder: the named books (a name ending in `/` is a folder)
+    /// and the named images in its `Covers` folder.
+    fn series(books: &[&str], covers: &[&str]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for book in books {
+            match book.strip_suffix('/') {
+                Some(folder) => std::fs::create_dir(dir.path().join(folder)).unwrap(),
+                None => std::fs::write(dir.path().join(book), b"x").unwrap(),
+            }
+        }
+        std::fs::create_dir(dir.path().join(COVERS_FOLDER)).unwrap();
+        for cover in covers {
+            std::fs::write(dir.path().join(COVERS_FOLDER).join(cover), b"x").unwrap();
+        }
+        dir
+    }
+
+    fn cover_for(dir: &tempfile::TempDir, book: &str) -> Option<String> {
+        let found = cover_by_convention(&dir.path().join(book))?;
+        assert_eq!(found.parent().unwrap(), dir.path().join(COVERS_FOLDER));
+        Some(found.file_name().unwrap().to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn without_a_covers_folder_there_is_no_cover_by_convention() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Vol 1.cbz"), b"x").unwrap();
+        assert_eq!(cover_by_convention(&dir.path().join("Vol 1.cbz")), None);
+    }
+
+    #[test]
+    fn covers_go_to_books_by_position_in_natural_order() {
+        let dir = series(
+            &["Vol 1.cbz", "Vol 2.cbz", "Vol 10.cbz", "notes.txt"],
+            &["c.png", "a.jpg", "b.jpg", "readme.txt"],
+        );
+        assert_eq!(cover_for(&dir, "Vol 1.cbz").as_deref(), Some("a.jpg"));
+        assert_eq!(cover_for(&dir, "Vol 2.cbz").as_deref(), Some("b.jpg"));
+        assert_eq!(cover_for(&dir, "Vol 10.cbz").as_deref(), Some("c.png"));
+    }
+
+    #[test]
+    fn a_book_past_the_last_cover_has_none() {
+        let dir = series(&["Vol 1.cbz", "Vol 2.cbz"], &["a.jpg"]);
+        assert_eq!(cover_for(&dir, "Vol 2.cbz"), None);
+    }
+
+    #[test]
+    fn earlier_output_beside_the_books_does_not_shift_the_covers() {
+        let dir = series(
+            &[
+                "Vol 1.cbz",
+                "Vol 1 (mangapress).cbz",
+                "Vol 1_kcc0.cbz",
+                "Vol 1.epub",
+                "Vol 2.cbz",
+            ],
+            &["a.jpg", "b.jpg"],
+        );
+        assert_eq!(cover_for(&dir, "Vol 2.cbz").as_deref(), Some("b.jpg"));
+    }
+
+    #[test]
+    fn folders_are_counted_among_folders_and_covers_is_not_one_of_them() {
+        // "Covers" sorts before both; upstream would count it as a book.
+        let dir = series(&["Vol 1/", "Vol 2/", "Vol 3.cbz"], &["a.jpg", "b.jpg"]);
+        assert_eq!(cover_for(&dir, "Vol 1").as_deref(), Some("a.jpg"));
+        assert_eq!(cover_for(&dir, "Vol 2").as_deref(), Some("b.jpg"));
+    }
+
+    #[test]
+    fn a_cover_named_like_the_book_is_its_cover_wherever_it_sorts() {
+        let dir = series(
+            &["Vol 1.cbz", "Vol 2.cbz", "Vol 3.cbz"],
+            &["VOL 3.jpg", "Vol 2.png"],
+        );
+        assert_eq!(cover_for(&dir, "Vol 3.cbz").as_deref(), Some("VOL 3.jpg"));
+        assert_eq!(cover_for(&dir, "Vol 2.cbz").as_deref(), Some("Vol 2.png"));
+        // Covers here are named after books, so the one without its own
+        // gets none — not "Vol 2.png", which position would hand it.
+        assert_eq!(cover_for(&dir, "Vol 1.cbz"), None);
+
+        // A folder's whole name is its title, dots included.
+        let dir = series(&["Vol. 1/", "Vol. 2/"], &["Vol. 2.jpg"]);
+        assert_eq!(cover_for(&dir, "Vol. 2").as_deref(), Some("Vol. 2.jpg"));
+        assert_eq!(cover_for(&dir, "Vol. 1"), None);
     }
 
     #[test]

@@ -76,10 +76,10 @@ compiled instead of interpreted. Measured converting a real 182-page, 7-chapter 
 
 Both tools crop/split/resize every page identically for this volume — verified by instrumenting a
 real KCC checkout to dump its own actual per-page decisions and diffing them against mangapress's,
-not just by comparing final file sizes. The extra file in KCC's output is a duplicate cover image;
-mangapress declares its EPUB cover by tagging the first page itself (`properties="cover-image"` in
-the manifest, plus the older `<meta name="cover">` convention), rather than writing a second copy of
-it the way KCC's own `cover.jpg` does.
+not just by comparing final file sizes. The extra file in KCC's output is its separate cover image;
+mangapress at that version declared the first page as the cover instead. It has since made a
+separate cover the way KCC does, so that a first page that gets cropped, split or rotated doesn't
+take the cover with it.
 
 ## Install
 
@@ -143,9 +143,14 @@ A few of the more commonly used flags:
   page-number-aware trimming (default: both).
 - `--splitter <split|rotate|both>` — how to handle double-page spreads.
 - `--eraserainbow` — attenuate Moire interference between halftone screentone and a color e-ink
-  (Kaleido-style) panel's diagonal subpixel grid. A display-artifact fix, not color output —
-  everything still converts to grayscale regardless of this flag or `--profile` (see "Not yet in
-  scope" above).
+  (Kaleido-style) panel's diagonal subpixel grid. A display-artifact fix, not color output (for
+  that, see `--forcecolor` above).
+- `--forcepng` — dither each page down to the device's own gray levels (16 on most e-ink screens)
+  and save it as PNG, instead of full-tone JPEG.
+- `--cover <FILE>` — use this image as the book's cover instead of the first page. Without it, a
+  folder named `Covers` beside the input is looked in: an image there named like the input
+  (`Covers/Vol 3.jpg` for `Vol 3.cbz`) is its cover; if no image there is named after a book, the
+  Nth image is the cover of the Nth book beside the input, as in KCC.
 - `--keepcomicinfo` — carry the source's `ComicInfo.xml` through into `.cbz` output.
 - `--nested-toc` — build a two-level table of contents (a volume entry, its chapters nested
   underneath) instead of the usual flat, one-entry-per-chapter list. For an input whose chapter
@@ -183,6 +188,21 @@ KCC is used as a reference/specification, not a source to copy from wholesale �
 why `image.py` and `dualmetafix.py` specifically (GPLv3-licensed, unlike the rest of the
 ISC-licensed repo) are treated as algorithm documentation to reimplement independently, not code
 to port.
+
+Given the same pages and options, mangapress is meant to produce the pages KCC 12.0.0 does, and
+[tools/parity](tools/parity/README.md) checks that it does. Where it differs, it is on purpose,
+and because mangapress is made for books read in KOReader rather than by Amazon's own reader:
+
+- No MOBI/AZW3, and none of what KCC does only for Amazon's converter: no Panel View, no page
+  splitting for the Kindle Scribe.
+- `--forcepng` always writes PNG. KCC writes GIF for a Kindle profile's EPUB; the palette PNG holds
+  the same pixels in a smaller file.
+- A spread kept upright with `--norotate` may be as large as two screens side by side on every
+  device. KCC caps it at 1920x1920 for a Kindle profile's EPUB.
+- A cover in the `Covers` folder can be matched by name, not only by position, and the `Covers`
+  folder is not itself counted as a book when the input is a folder.
+- Only `.cbz` and folders are read — no `.cbr`, `.cb7`, PDF or EPUB input, which is what lets
+  mangapress be one binary with nothing else to install.
 
 ## License
 

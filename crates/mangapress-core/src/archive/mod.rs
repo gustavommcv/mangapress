@@ -21,6 +21,12 @@ pub struct SourceEntry {
 /// `removeNonImages()` filtering by extension, not by sniffing file content.
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
 
+/// Whether `path` is named like a page image this tool reads.
+pub fn has_image_extension(path: &std::path::Path) -> bool {
+    path.extension()
+        .is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.to_string_lossy().to_lowercase().as_str()))
+}
+
 /// Drops entries that aren't recognized page images before they can reach
 /// chapter grouping or the image pipeline — without this, a stray `.txt`, a
 /// `ComicInfo.xml` nested in a chapter subfolder, or a `.cbz` zipped on
@@ -45,9 +51,7 @@ pub fn filter_image_entries(entries: Vec<SourceEntry>) -> (Vec<SourceEntry>, usi
                     .relative_path
                     .file_name()
                     .is_some_and(|n| n.to_string_lossy().starts_with("._"));
-            let is_recognized_image = entry.relative_path.extension().is_some_and(|e| {
-                IMAGE_EXTENSIONS.contains(&e.to_string_lossy().to_lowercase().as_str())
-            });
+            let is_recognized_image = has_image_extension(&entry.relative_path);
 
             let keep = is_recognized_image && !is_macos_sidecar;
             if !keep {

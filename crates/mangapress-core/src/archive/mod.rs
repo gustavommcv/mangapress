@@ -1,9 +1,10 @@
-//! Archive input/output. v1 scope is `.cbz` (a plain ZIP) and bare folders
+//! Archive input/output. The scope is `.cbz` (a plain ZIP) and bare folders
 //! of images only — matching the actual Mangabind->mangapress contract
-//! (see `docs/adr/0005-mangabind-contract.md`). CBR/7z/RAR input is
-//! explicitly out of scope for now: KCC itself hard-requires the external
-//! `7z` binary for those with no pure-Python fallback, and the `zip` crate
-//! gives us a pure-Rust path for the one format that actually matters here.
+//! (see `docs/adr/0005-mangabind-contract.md`). CBR/7z/RAR input is out of
+//! scope on purpose (`docs/adr/0013-follow-a-named-kcc-release.md`): KCC
+//! itself hard-requires the external `7z` binary for those with no
+//! pure-Python fallback, and the `zip` crate gives us a pure-Rust path for
+//! the one format that actually matters here.
 
 pub mod cbz;
 pub mod folder;
@@ -20,6 +21,12 @@ pub struct SourceEntry {
 /// Recognized page image extensions (case-insensitive) — matches KCC's own
 /// `removeNonImages()` filtering by extension, not by sniffing file content.
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
+
+/// Whether `path` is named like a page image this tool reads.
+pub fn has_image_extension(path: &std::path::Path) -> bool {
+    path.extension()
+        .is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.to_string_lossy().to_lowercase().as_str()))
+}
 
 /// Drops entries that aren't recognized page images before they can reach
 /// chapter grouping or the image pipeline — without this, a stray `.txt`, a
@@ -45,9 +52,7 @@ pub fn filter_image_entries(entries: Vec<SourceEntry>) -> (Vec<SourceEntry>, usi
                     .relative_path
                     .file_name()
                     .is_some_and(|n| n.to_string_lossy().starts_with("._"));
-            let is_recognized_image = entry.relative_path.extension().is_some_and(|e| {
-                IMAGE_EXTENSIONS.contains(&e.to_string_lossy().to_lowercase().as_str())
-            });
+            let is_recognized_image = has_image_extension(&entry.relative_path);
 
             let keep = is_recognized_image && !is_macos_sidecar;
             if !keep {
@@ -57,6 +62,39 @@ pub fn filter_image_entries(entries: Vec<SourceEntry>) -> (Vec<SourceEntry>, usi
         })
         .collect();
     (kept, skipped)
+}
+
+/// How many of the entries are images smaller than `device` on *both*
+/// axes, and how many could be measured at all — upstream's
+/// `detectSuboptimalProcessing()` count, behind its "more than 25% of images
+/// are smaller than the device" warning. Only headers are read.
+pub fn smaller_than_device(entries: &[SourceEntry], device: (u32, u32)) -> (usize, usize) {
+    let (mut smaller, mut measured) = (0, 0);
+    for entry in entries {
+        let dimensions = image::ImageReader::new(std::io::Cursor::new(&entry.bytes))
+            .with_guessed_format()
+            .ok()
+            .and_then(|reader| reader.into_dimensions().ok());
+        if let Some((width, height)) = dimensions {
+            measured += 1;
+            if device.0 > width && device.1 > height {
+                smaller += 1;
+            }
+        }
+    }
+    (smaller, measured)
+}
+
+/// Whether the input looks like something KCC already converted: upstream
+/// names every page it writes `...-kcc-x`, `-kcc-b` and so on, and warns
+/// that converting those again only loses quality.
+pub fn looks_already_converted(entries: &[SourceEntry]) -> bool {
+    entries.iter().any(|entry| {
+        entry
+            .relative_path
+            .file_stem()
+            .is_some_and(|stem| stem.to_string_lossy().contains("-kcc"))
+    })
 }
 
 #[cfg(test)]
@@ -103,5 +141,43 @@ mod tests {
         ]);
         assert_eq!(kept.len(), 1);
         assert_eq!(skipped, 2);
+    }
+
+    fn png_entry(name: &str, width: u32, height: u32) -> SourceEntry {
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageLuma8(image::GrayImage::new(width, height))
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        SourceEntry {
+            relative_path: std::path::PathBuf::from(name),
+            bytes,
+        }
+    }
+
+    #[test]
+    fn counts_images_smaller_than_the_device_on_both_axes() {
+        let entries = vec![
+            png_entry("c1/a.png", 600, 900),   // smaller both ways
+            png_entry("c1/b.png", 1072, 900),  // as wide as the device: not smaller
+            png_entry("c1/c.png", 2000, 3000), // larger
+            SourceEntry {
+                relative_path: std::path::PathBuf::from("c1/broken.png"),
+                bytes: b"not an image".to_vec(),
+            },
+        ];
+        assert_eq!(smaller_than_device(&entries, (1072, 1448)), (1, 3));
+    }
+
+    #[test]
+    fn recognizes_pages_kcc_already_wrote() {
+        assert!(looks_already_converted(&[png_entry(
+            "c1/kcc-0001-kcc-x.png",
+            4,
+            4
+        )]));
+        assert!(!looks_already_converted(&[png_entry("c1/p0001.png", 4, 4)]));
     }
 }

@@ -116,19 +116,52 @@ impl Default for CropPolicy {
 /// crop if the result keeps at least `minimum_area_ratio` of the page.
 /// Returns `None` when the computed crop doesn't clear the minimum-area
 /// gate — meaning "leave the page as-is."
+///
+/// Everything up to the final crop stays in fractional pixels, as it does
+/// upstream: the 10% cap is `0.1 * w` (rarely a whole number), the
+/// preserve-margin back-off scales that, the minimum-area gate is judged on
+/// the fractional box, and only then does Pillow's `Image.crop()` round each
+/// edge — with Python's `round()`, so a `.5` goes to the even neighbour. An
+/// earlier version rounded after the cap and again after the back-off, both
+/// times half away from zero, which lands a pixel off whenever an edge sits
+/// on a `.5` (a 905px-wide page capped at 90.5) or the two roundings
+/// compound.
 pub fn apply_policy(bbox: Bbox, image_size: (u32, u32), policy: &CropPolicy) -> Option<CropBox> {
     let capped = cap_to_ten_percent(bbox, image_size);
     let preserved = apply_preserve_margin(capped, image_size, policy.preserve_margin_percent);
 
     if area_ratio(preserved, image_size) >= policy.minimum_area_ratio {
-        Some(preserved)
+        Some(preserved.rounded())
     } else {
         None
     }
 }
 
-/// Crop an image to a previously computed [`CropBox`].
-pub fn apply_crop(img: &GrayImage, crop: CropBox) -> GrayImage {
+/// A crop box still in fractional pixels — `left, top, right, bottom`, the
+/// order Pillow's boxes use. See [`apply_policy`] for why it isn't rounded
+/// until the very end.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FractionalBox([f64; 4]);
+
+impl FractionalBox {
+    fn rounded(self) -> CropBox {
+        let [left, top, right, bottom] = self.0.map(crate::resize::round_half_even);
+        CropBox {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+}
+
+/// Crop an image to a previously computed [`CropBox`]. Generic over the
+/// pixel type: the pipeline crops the page while it is still RGB (see
+/// [`crate::pipeline::process_page`]).
+pub fn apply_crop<P: image::Pixel + 'static>(
+    img: &image::ImageBuffer<P, Vec<P::Subpixel>>,
+    crop: CropBox,
+) -> image::ImageBuffer<P, Vec<P::Subpixel>> {
     image::imageops::crop_imm(
         img,
         crop.left,
@@ -143,14 +176,14 @@ pub fn apply_crop(img: &GrayImage, crop: CropBox) -> GrayImage {
 /// max(0.9*h, lower))` — caps how much can be cropped off each side to at
 /// most 10% of that dimension, without forcing a full 10% crop when the
 /// detected margin is smaller than that.
-fn cap_to_ten_percent(bbox: Bbox, (w, h): (u32, u32)) -> CropBox {
+fn cap_to_ten_percent(bbox: Bbox, (w, h): (u32, u32)) -> FractionalBox {
     let (w, h) = (w as f64, h as f64);
-    CropBox {
-        left: (0.1 * w).min(bbox.left as f64).round() as u32,
-        top: (0.1 * h).min(bbox.top as f64).round() as u32,
-        right: (0.9 * w).max(bbox.right as f64).round() as u32,
-        bottom: (0.9 * h).max(bbox.bottom as f64).round() as u32,
-    }
+    FractionalBox([
+        (0.1 * w).min(bbox.left as f64),
+        (0.1 * h).min(bbox.top as f64),
+        (0.9 * w).max(bbox.right as f64),
+        (0.9 * h).max(bbox.bottom as f64),
+    ])
 }
 
 /// `ratio = 1 - preservemargin/100; box = left*ratio, upper*ratio,
@@ -159,27 +192,28 @@ fn cap_to_ten_percent(bbox: Bbox, (w, h): (u32, u32)) -> CropBox {
 /// 1`), so upstream's `if self.opt.preservemargin:` guard doesn't need a
 /// separate branch here.
 fn apply_preserve_margin(
-    crop: CropBox,
+    crop: FractionalBox,
     (w, h): (u32, u32),
     preserve_margin_percent: f32,
-) -> CropBox {
+) -> FractionalBox {
     // Clamped to keep `ratio` in [0.0, 1.0]: outside that range `right`
     // could end up left of `left`, and `apply_crop`'s `right - left` would
     // underflow and panic.
     let preserve_margin_percent = preserve_margin_percent.clamp(0.0, 100.0);
     let ratio = 1.0 - (preserve_margin_percent as f64) / 100.0;
     let (w, h) = (w as f64, h as f64);
-    CropBox {
-        left: (crop.left as f64 * ratio).round() as u32,
-        top: (crop.top as f64 * ratio).round() as u32,
-        right: (crop.right as f64 + (w - crop.right as f64) * (1.0 - ratio)).round() as u32,
-        bottom: (crop.bottom as f64 + (h - crop.bottom as f64) * (1.0 - ratio)).round() as u32,
-    }
+    let [left, top, right, bottom] = crop.0;
+    FractionalBox([
+        left * ratio,
+        top * ratio,
+        right + (w - right) * (1.0 - ratio),
+        bottom + (h - bottom) * (1.0 - ratio),
+    ])
 }
 
-fn area_ratio(crop: CropBox, (w, h): (u32, u32)) -> f64 {
-    let box_area =
-        crop.right.saturating_sub(crop.left) as f64 * crop.bottom.saturating_sub(crop.top) as f64;
+fn area_ratio(crop: FractionalBox, (w, h): (u32, u32)) -> f64 {
+    let [left, top, right, bottom] = crop.0;
+    let box_area = (right - left).max(0.0) * (bottom - top).max(0.0);
     let image_area = w as f64 * h as f64;
     box_area / image_area
 }
@@ -299,8 +333,8 @@ pub fn ignore_pixels_near_edge(bw_img: &mut GrayImage) {
     }
 }
 
-/// Output of the shared prefix both [`margin::get_bbox_crop_margin`] and
-/// [`page_number::get_bbox_crop_margin_page_number`] start from: grayscale
+/// Output of the shared prefix both [`margin::content_bbox`] and
+/// [`page_number::content_bbox_ignoring_page_number`] start from: grayscale
 /// input, invert if the background is dark, autocontrast (cutoff 1%),
 /// box-blur (radius 1), threshold, clear edge noise, take a bbox.
 pub struct Binarized {
@@ -537,15 +571,10 @@ mod tests {
 
     #[test]
     fn preserve_margin_backs_off_the_crop() {
-        let full = CropBox {
-            left: 20,
-            top: 30,
-            right: 180,
-            bottom: 270,
-        };
+        let full = FractionalBox([20.0, 30.0, 180.0, 270.0]);
         let backed_off = apply_preserve_margin(full, (200, 300), 50.0);
         assert_eq!(
-            backed_off,
+            backed_off.rounded(),
             CropBox {
                 left: 10,
                 top: 15,
@@ -557,13 +586,32 @@ mod tests {
 
     #[test]
     fn preserve_margin_zero_is_identity() {
-        let full = CropBox {
-            left: 20,
-            top: 30,
-            right: 180,
-            bottom: 270,
-        };
+        let full = FractionalBox([20.0, 30.0, 180.0, 270.0]);
         assert_eq!(apply_preserve_margin(full, (200, 300), 0.0), full);
+    }
+
+    #[test]
+    fn a_capped_edge_on_a_half_pixel_rounds_to_the_even_neighbour() {
+        // 10% of a 905px-wide page is 90.5: Pillow's crop rounds that to 90
+        // (even), and the matching right edge, 814.5, to 814. The detected
+        // content box is narrower than the cap on every side, so the cap is
+        // what decides all four edges.
+        let bbox = Bbox {
+            left: 300,
+            top: 300,
+            right: 600,
+            bottom: 600,
+        };
+        let crop = apply_policy(bbox, (905, 1005), &CropPolicy::default()).unwrap();
+        assert_eq!(
+            crop,
+            CropBox {
+                left: 90,
+                top: 100,
+                right: 814,
+                bottom: 904
+            }
+        );
     }
 
     #[test]

@@ -8,18 +8,37 @@
 //! `docs/adr/0008-mobi-azw3-permanently-out-of-scope.md`.
 
 pub mod cbz_out;
+pub mod cover;
 pub mod epub;
 pub mod pdf;
+pub mod spreads;
 
 use crate::archive::SourceEntry;
 use std::path::PathBuf;
 
-/// One already-processed page: raw encoded image bytes plus the format
-/// (needed for the EPUB manifest's media-type and the file extension).
+/// One page: raw encoded image bytes plus the format (needed for the EPUB
+/// manifest's media-type and the file extension), and — once the pipeline has
+/// processed it — what the EPUB builder needs to present it as upstream does.
+#[derive(Debug, Clone, Default)]
 pub struct Page {
     /// Lowercase, no leading dot (e.g. `"jpg"`, `"png"`).
     pub extension: String,
     pub bytes: Vec<u8>,
+    /// The page's background was detected as dark — see
+    /// [`crate::pipeline::ProcessedPage::black_background`]. Always `false`
+    /// for a page that hasn't been through the pipeline.
+    pub black_background: bool,
+    /// What the page is relative to the source page it came from — see
+    /// [`crate::pipeline::spread::PageRole`]. `Normal` for a page that hasn't
+    /// been through the pipeline.
+    pub role: crate::pipeline::spread::PageRole,
+    /// This page is a further piece of the same source page as the one
+    /// before it — the second half of a split spread, or the rotated copy
+    /// that follows the halves. `false` for the first (or only) page a
+    /// source page became, and for a page that hasn't been through the
+    /// pipeline. It is what lets a `ComicInfo.xml` bookmark, which counts
+    /// source pages, find its output page.
+    pub continues_source_page: bool,
 }
 
 /// One chapter's worth of pages, keyed by its *full relative path* from the
@@ -67,6 +86,7 @@ pub fn group_into_chapters(entries: Vec<SourceEntry>) -> Vec<Chapter> {
         let page = Page {
             extension,
             bytes: entry.bytes,
+            ..Default::default()
         };
 
         let chapter_index = *chapter_index_by_parent

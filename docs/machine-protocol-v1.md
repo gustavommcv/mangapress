@@ -76,10 +76,19 @@ Version 1 issue codes are:
 | `input_empty` | `inspect` | The input contains no files |
 | `skipped_non_images` | `inspect` | Non-image entries were ignored |
 | `no_page_images` | `inspect` | No recognized image entries remain |
+| `source_already_converted` | `inspect` | The pages carry KCC's own file names; converting again loses quality |
+| `images_smaller_than_device` | `inspect` | Over a quarter of the pages are smaller than the screen and nothing enlarges them |
+| `cover_read_failed` | `inspect` | The cover image — `--cover`, or the one found in a `Covers` folder beside the input — could not be read |
+| `spread_labels_read_failed` | `inspect` | The `--spreads` file could not be read, or is not a list of spread labels |
+| `spread_labels_ignored` | `inspect` | A `.json` file beside the input is not a list of spread labels; the book is converted without it |
+| `spread_labels_skipped` | `inspect` | Some labelled positions have no page to be joined with; the others were joined |
+| `spread_join_failed` | `inspect` | Two pages labelled as a spread could not be joined into one image |
 | `metadata_parse_failed` | `metadata` | ComicInfo.xml is invalid or unreadable |
 | `output_collision` | `plan` | The chosen output would overwrite the input; a safe name is used |
 | `output_directory_create_failed` | `write` | The output directory could not be created |
 | `page_processing_failed` | `process` | A named page in a named chapter failed conversion |
+| `webtoon_split_failed` | `process` | A chapter's strips could not be cut into pages |
+| `cover_build_failed` | `package` | The cover could not be made from its image |
 | `book_build_failed` | `package` | EPUB, CBZ, or PDF assembly failed |
 | `output_write_failed` | `write` | The completed bytes could not be saved |
 | `event_write_failed` | `protocol` | The JSON Lines stream itself could not be written |

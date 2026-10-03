@@ -5,9 +5,10 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 mangapress resizes and optimizes a manga/comic `.cbz` for e-ink reading, generating a fixed-layout
-EPUB (or CBZ/PDF) tuned to a target device's screen resolution and grayscale palette — a CLI-first
-Rust rewrite of [KCC (Kindle Comic Converter)](https://github.com/ciromattia/kcc)'s conversion
-pipeline, distributed as a single static binary.
+EPUB (or CBZ/PDF) tuned to a target device's screen resolution and grayscale palette. It is an
+independent, CLI-first reimplementation in Rust of what
+[KCC (Kindle Comic Converter)](https://github.com/ciromattia/kcc)'s conversion pipeline does,
+distributed as a single static binary.
 
 ```
 Raw chapters (folder or .cbz per chapter)
@@ -43,44 +44,24 @@ mangapress also doesn't download or organize chapters — that's
 [Mangabind](https://github.com/gustavommcv/mangabind)'s job; mangapress only ever
 reads a finished `.cbz`/folder and writes a converted book.
 
-**Not yet in scope:** color output. Every page is converted to grayscale, even on the
-color-capable profiles this project already lists (`KCS` Kindle Colorsoft, `KoCC` Kobo Clara
-Colour, `KoLC` Kobo Libra Colour) — picking one of those today gets the right resolution and
-nothing else color-specific. Fine for traditionally black-and-white manga (the common case this
-project targets), not for webtoons or color manga read on color-capable hardware. See
-[docs/adr/0010-color-output-deferred.md](docs/adr/0010-color-output-deferred.md) for why, and what
-adding it would actually involve. `--eraserainbow` (below) does not change this — it fixes a
-display artifact, it doesn't produce color output.
+**Color output is opt-in.** By default every page comes out grayscale, as upstream's does;
+`--forcecolor` keeps color pages (and the cover) in color, on any profile, while pages with no real
+color are still converted. Unlike upstream's window, the command line does not turn it on by itself
+for a color-capable profile (`KCS` Kindle Colorsoft, `KoCC` Kobo Clara Colour, `KoLC` Kobo Libra
+Colour): pass the flag. `--eraserainbow` (below) is a separate thing — it fixes a display artifact
+of color e-ink screens, on grayscale and color pages alike.
 
 ## Status
 
 Functional: device profiles for ~40 Kindle/Kobo/reMarkable/generic targets, the full image
-pipeline (per-page background detection, margin and page-number-aware cropping, inter-panel
-cropping, resize, gamma/autocontrast, double-page-spread split/rotate, rainbow-artifact removal),
-`ComicInfo.xml` metadata resolution, and EPUB/CBZ/PDF output all work end to end and are covered by
-an extensive test suite — see
+pipeline (per-page background and color detection, margin and page-number-aware cropping,
+inter-panel cropping, resize, gamma/autocontrast, double-page-spread split/rotate, rainbow-artifact
+removal, grayscale or color output, palette quantization), webtoon mode (long strips cut into pages
+between panels), `ComicInfo.xml` metadata and bookmarks, and EPUB/CBZ/PDF output all work end to end
+and are covered by an extensive test suite, checked page by page against upstream KCC 12.0.0 by
+running KCC's own code next to it ([tools/parity](tools/parity/README.md)) — see
 [docs/adr](docs/adr/README.md) for the design decisions made so far, and open an issue if you hit
-a rough edge. Everything is grayscale output today regardless of profile (see "Not yet in scope"
-above) — still pre-1.0.
-
-## Performance
-
-Page processing is parallelized across every CPU core (via [`rayon`](https://github.com/rayon-rs/rayon)),
-matching how upstream KCC fans work out across a `multiprocessing.Pool()` — mangapress just does it
-compiled instead of interpreted. Measured converting a real 182-page, 7-chapter volume
-(`--profile KV`, EPUB output) on a 6-core/12-thread AMD Ryzen 5 5600X, averaged over 3 runs each:
-
-| | mangapress v0.4.0 | KCC 11.2.0 |
-|---|---|---|
-| Wall time | **~2.8s** | ~5.0s |
-| Output | 186 pages, EPUB with a declared cover | 186 pages + a separate `cover.jpg`, same page content |
-
-Both tools crop/split/resize every page identically for this volume — verified by instrumenting a
-real KCC checkout to dump its own actual per-page decisions and diffing them against mangapress's,
-not just by comparing final file sizes. The extra file in KCC's output is a duplicate cover image;
-mangapress declares its EPUB cover by tagging the first page itself (`properties="cover-image"` in
-the manifest, plus the older `<meta name="cover">` convention), rather than writing a second copy of
-it the way KCC's own `cover.jpg` does.
+a rough edge. Still pre-1.0.
 
 ## Install
 
@@ -99,7 +80,8 @@ irm https://raw.githubusercontent.com/gustavommcv/mangapress/main/install.ps1 | 
 Both scripts download the right binary for your OS/architecture from the
 [latest release](https://github.com/gustavommcv/mangapress/releases/latest) and put it on your
 PATH — no need to install Rust. Prebuilt binaries and checksums for every release are also
-available there directly, if you'd rather install manually.
+available there directly, if you'd rather install manually. Each archive holds the binary, the
+two license texts and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 Already have Rust and want the dev version instead:
 
@@ -117,9 +99,10 @@ existing binary in place. `mangapress --version` tells you what you currently ha
 mangapress is a single self-contained binary; there's no installer state to clean up beyond it.
 
 - **macOS/Linux:** `rm ~/.local/bin/mangapress`
-- **Windows:** delete `%LOCALAPPDATA%\Programs\mangapress\mangapress.exe`. The installer added
-  that folder to your user `PATH`; if you'd rather remove that entry too, it's under Settings >
-  System > About > Advanced system settings > Environment Variables > `Path` (User variables).
+- **Windows:** delete the folder `%LOCALAPPDATA%\Programs\mangapress` (the executable and the
+  license files beside it). The installer added that folder to your user `PATH`; if you'd rather
+  remove that entry too, it's under Settings > System > About > Advanced system settings >
+  Environment Variables > `Path` (User variables).
 - **`cargo install`:** `cargo uninstall mangapress-cli`.
 
 ## Usage
@@ -131,21 +114,43 @@ mangapress /path/to/volume.cbz --profile KV --format epub
 The input can be a `.cbz` file or a folder of chapter subfolders (the layout
 [Mangabind](https://github.com/gustavommcv/mangabind) produces — see
 [docs/adr/0005-mangabind-contract.md](docs/adr/0005-mangabind-contract.md)). If `--output` isn't
-given, the result is written next to the input with the right extension for `--format`.
+given, the result is written next to the input with the right extension for `--format` — for a
+Kobo profile's EPUB that is `.kepub.epub`, which Kobo's own reader wants (`--nokepub` for a plain
+`.epub`).
+
+mangapress warns, and carries on, when over a quarter of the pages are smaller than the device's
+screen and nothing enlarges them (`--upscale`, `--stretch`), and when the pages look like KCC
+already converted them once.
 
 A few of the more commonly used flags:
 
 - `--profile <CODE>` — target device (e.g. `KV` Kindle Voyage, `KPW5` Kindle Paperwhite 5,
   `KoAO` Kobo Aura ONE, `Rmk2` reMarkable 2, `OTHER` for `--customwidth`/`--customheight`).
-- `--format <epub|cbz|pdf>` — output format (default `epub`).
+- `--format <auto|epub|cbz|pdf>` — output format (default `auto`: CBZ for the four oldest Kindles,
+  PDF for reMarkable, EPUB for everything else).
 - `--manga-style` — right-to-left reading order and spread-split order.
 - `--cropping <disabled|margins|margins-and-page-numbers>` — margin detection, with or without
   page-number-aware trimming (default: both).
 - `--splitter <split|rotate|both>` — how to handle double-page spreads.
+- `--upscale` — enlarge pages smaller than the screen to fit it. Off by default, as in KCC's
+  command line.
+- `--webtoon` — for long vertical strips: join each chapter's images and cut them into
+  screen-sized pages between panels, not across them.
+- `--forcecolor` — keep color pages in color (see "Color output is opt-in" above).
 - `--eraserainbow` — attenuate Moire interference between halftone screentone and a color e-ink
-  (Kaleido-style) panel's diagonal subpixel grid. A display-artifact fix, not color output —
-  everything still converts to grayscale regardless of this flag or `--profile` (see "Not yet in
-  scope" above).
+  (Kaleido-style) panel's diagonal subpixel grid. A display-artifact fix, not color output (for
+  that, see `--forcecolor` above).
+- `--forcepng` — dither each page down to the device's own gray levels (16 on most e-ink screens)
+  and save it as PNG, instead of full-tone JPEG.
+- `--cover <FILE>` — use this image as the book's cover instead of the first page. Without it, a
+  folder named `Covers` beside the input is looked in: an image there named like the input
+  (`Covers/Vol 3.jpg` for `Vol 3.cbz`) is its cover; if no image there is named after a book, the
+  Nth image is the cover of the Nth book beside the input, as in KCC.
+- `--spreads <FILE>` — join pages that are the two halves of one double-page spread, stored as
+  separate images, back into one before anything else is done to them. The file is JSON listing
+  the position (counting from 0) of the first page of each pair: `{"spreads": [12, 40]}`. That is
+  the file KCC's "Label Spreads" window writes, and without the option one named like the input
+  plus `.json` beside it is used.
 - `--keepcomicinfo` — carry the source's `ComicInfo.xml` through into `.cbz` output.
 - `--nested-toc` — build a two-level table of contents (a volume entry, its chapters nested
   underneath) instead of the usual flat, one-entry-per-chapter list. For an input whose chapter
@@ -155,9 +160,16 @@ A few of the more commonly used flags:
   [docs/adr/0012-nested-toc-for-combined-volumes.md](docs/adr/0012-nested-toc-for-combined-volumes.md).
 
 Run `mangapress --help` for the full list, including cropping-aggressiveness tuning
-(`--croppingpower`, `--croppingminimum`, `--preservemargin`), resize behavior (`--upscale`,
-`--stretch`, `--wallpaper`, `--whiteborders`), and metadata overrides (`--title`, `--author`,
-`--metadatatitle`, `--language`).
+(`--croppingpower`, `--croppingminimum`, `--preservemargin`, `--ipc`), resize behavior (`--stretch`,
+`--wallpaper`, `--blackborders`, `--whiteborders`), contrast (`--gamma`, `--autolevel`,
+`--noautocontrast`, `--colorautocontrast`), what becomes of a double-page spread (`--norotate`,
+`--rotatefirst`, `--rotateright`, `--maximizestrips`), how pages sit in a two-page view
+(`--invertdirection`, `--spreadshift`, `--onepagelandscape` — for readers that lay out fixed-layout
+spreads, like Kobo's and Kindle's own; KOReader ignores them), the cover (`--smartcovercrop`,
+`--coverfill`), the PNG variants (`--pnglegacy`, `--noquantize`, `--force-png-rgb`),
+`--noprocessing` to package images untouched, and metadata overrides (`--title`, `--author`,
+`--metadatatitle`, `--language`). The names are KCC's wherever the option means the same thing; one
+takes a different unit — `--croppingminimum` is a percentage here and a fraction in KCC.
 
 ### Machine-readable integration
 
@@ -178,12 +190,39 @@ rather than infer compatibility from the release version.
 
 ## Relationship to upstream KCC
 
-KCC is used as a reference/specification, not a source to copy from wholesale — see
+mangapress is a separate project, not affiliated with or endorsed by KCC or its authors. It takes
+KCC's *behavior* as its specification and reimplements it; it does not include KCC's code. See
 [docs/adr/0007-gplv3-boundary-kcc-image-rs.md](docs/adr/0007-gplv3-boundary-kcc-image-rs.md) for
-why `image.py` and `dualmetafix.py` specifically (GPLv3-licensed, unlike the rest of the
-ISC-licensed repo) are treated as algorithm documentation to reimplement independently, not code
-to port.
+how that line is kept, and why it matters most for `image.py` and `dualmetafix.py`, which are
+GPLv3-licensed, unlike the rest of the ISC-licensed repository. What mangapress does share with
+KCC's own text — EPUB markup, option names — and KCC's license notice are in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+Given the same pages and options, mangapress is meant to produce the pages KCC 12.0.0 does, and
+[tools/parity](tools/parity/README.md) checks that it does. Where it differs, it is on purpose —
+[ADR 0013](docs/adr/0013-follow-a-named-kcc-release.md) has the whole list and the reasons — and
+mostly because mangapress is made for books read in KOReader rather than by Amazon's own reader:
+
+- No MOBI/AZW3, and none of what KCC does only for Amazon's converter: no Panel View, no page
+  splitting for the Kindle Scribe.
+- `--forcepng` always writes PNG. KCC writes GIF for a Kindle profile's EPUB; the palette PNG holds
+  the same pixels in a smaller file.
+- A spread kept upright with `--norotate` may be as large as two screens side by side on every
+  device. KCC caps it at 1920x1920 for a Kindle profile's EPUB.
+- A cover in the `Covers` folder can be matched by name, not only by position, and the `Covers`
+  folder is not itself counted as a book when the input is a folder.
+- Only `.cbz` and folders are read — no `.cbr`, `.cb7`, PDF or EPUB input, which is what lets
+  mangapress be one binary with nothing else to install.
+- Grouping chapters into volumes and splitting volumes by size are left to
+  [Mangabind](https://github.com/gustavommcv/mangabind).
+- No WebP output yet, and no repacked (mozJPEG-style) JPEG. WebP was measured — about 38% smaller
+  than JPEG at the same quality setting, with higher fidelity, and slower to decode — and both
+  are deferred: [ADR 0014](docs/adr/0014-webp-output-deferred.md).
 
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) acknowledges the two projects whose work
+mangapress reproduces — KCC, and Pillow, which KCC's image processing is built on — and carries
+their license notices.

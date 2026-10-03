@@ -25,3 +25,8 @@ verbatim (rather than reimplemented from the algorithm description), that
 specific file must retain the original ISC notice per its terms — dual
 MIT/Apache-2.0 for the rest of the project doesn't remove that obligation
 for a directly-copied file. See `0007-gplv3-boundary-kcc-image-rs.md`.
+
+Since then the repository carries `THIRD-PARTY-NOTICES.md`, with KCC's ISC
+notice (for the EPUB markup, option names and option descriptions that
+follow KCC's ISC-licensed files) and Pillow's (for the arithmetic
+reproduced from it). Neither changes this project's own license.

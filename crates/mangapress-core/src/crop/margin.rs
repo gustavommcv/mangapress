@@ -1,6 +1,6 @@
 //! Whitespace margin cropping.
 //!
-//! Port target: `get_bbox_crop_margin()` (bbox detection, in
+//! Upstream reference: `get_bbox_crop_margin()` (bbox detection, in
 //! `page_number_crop_alg.py`) plus `cropMargin()`/`maybeCrop()` (the policy
 //! wrapped around it, in `image.py` — see [`super::apply_policy`]).
 //! `image.py` is GPLv3 — this is a reimplementation from its documented
@@ -12,18 +12,18 @@
 use super::{apply_policy, Background, Bbox, CropBox, CropPolicy};
 use image::GrayImage;
 
-/// `get_bbox_crop_margin()`: grayscale input assumed (the pipeline already
-/// works in [`GrayImage`] by this stage), invert if the page background is
-/// dark, autocontrast (cutoff 1%), box-blur (radius 1) to suppress scan
-/// noise, threshold, clear sparse edge-noise, then take the bounding box of
-/// what's left.
-pub fn get_bbox_crop_margin(img: &GrayImage, power: f32, background: Background) -> Option<Bbox> {
+/// Upstream's `get_bbox_crop_margin()`: grayscale input assumed (the
+/// pipeline already works in [`GrayImage`] by this stage), invert if the
+/// page background is dark, autocontrast (cutoff 1%), box-blur (radius 1)
+/// to suppress scan noise, threshold, clear sparse edge-noise, then take
+/// the bounding box of what's left.
+pub fn content_bbox(img: &GrayImage, power: f32, background: Background) -> Option<Bbox> {
     super::binarize_for_crop(img, power, background, true).bbox
 }
 
 /// `cropMargin()` + `maybeCrop()`.
 pub fn compute_margin_crop(img: &GrayImage, policy: &CropPolicy) -> Option<CropBox> {
-    let bbox = get_bbox_crop_margin(img, policy.power, policy.background)?;
+    let bbox = content_bbox(img, policy.power, policy.background)?;
     apply_policy(bbox, img.dimensions(), policy)
 }
 
@@ -50,7 +50,7 @@ mod tests {
     #[test]
     fn blank_white_page_has_no_bbox() {
         let img = GrayImage::from_pixel(200, 300, Luma([255]));
-        assert_eq!(get_bbox_crop_margin(&img, 1.0, Background::White), None);
+        assert_eq!(content_bbox(&img, 1.0, Background::White), None);
     }
 
     #[test]
@@ -59,8 +59,7 @@ mod tests {
         // under the 10% cap, so the final crop should track the detected
         // content closely (allow a couple pixels of blur/threshold slop).
         let img = white_page_with_black_rect((200, 300), (5, 5, 195, 295));
-        let bbox =
-            get_bbox_crop_margin(&img, 1.0, Background::White).expect("content should be detected");
+        let bbox = content_bbox(&img, 1.0, Background::White).expect("content should be detected");
         assert!(bbox.left <= 7, "left={}", bbox.left);
         assert!(bbox.top <= 7, "top={}", bbox.top);
         assert!(bbox.right >= 193, "right={}", bbox.right);

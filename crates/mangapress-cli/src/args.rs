@@ -1,8 +1,9 @@
-//! CLI surface for v1. Deliberately a subset of `kcc-c2e.py`'s full flag
-//! list (see the KCC research notes for the complete upstream inventory) —
-//! only what's needed for the EPUB/CBZ/PDF-out, `.cbz`/folder-in scope
-//! this project actually targets. Flags are added as their backing feature
-//! gets implemented in `mangapress-core`, not preemptively.
+//! The command line. KCC 12.0.0's own options, under KCC's names where they
+//! mean the same thing, minus the ones left out on purpose (MOBI, Panel
+//! View, other input formats, volume grouping and splitting — the list and
+//! the reasons are in `docs/adr/0013-follow-a-named-kcc-release.md`), plus
+//! this tool's own (`--json-events`, `--dry-run`, `--nested-toc`, `--cover`,
+//! `--list-profiles`).
 
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
@@ -86,8 +87,14 @@ pub struct Cli {
     #[arg(long)]
     pub wallpaper: bool,
 
-    /// Disable autodetection and force white borders instead of padding
-    /// with the page's detected background color (CBZ/PDF output only).
+    /// Disable autodetection and force black borders: the pad color for
+    /// CBZ/PDF pages and the page background in an EPUB.
+    #[arg(long)]
+    pub blackborders: bool,
+
+    /// Disable autodetection and force white borders: CBZ/PDF pages are not
+    /// padded with the page's detected background color, and the page
+    /// background in an EPUB is white even for a dark page.
     #[arg(long)]
     pub whiteborders: bool,
 
@@ -100,6 +107,101 @@ pub struct Cli {
     /// for Kindle Scribe/Colorsoft profiles (KS*/KCS), 85 otherwise.
     #[arg(long, value_parser = clap::value_parser!(u8).range(1..=100))]
     pub jpeg_quality: Option<u8>,
+
+    /// Keep the whole-spread copy of a double-page spread upright instead
+    /// of rotating it.
+    #[arg(long)]
+    pub norotate: bool,
+
+    /// Put the whole-spread copy before the two halves instead of after.
+    #[arg(long)]
+    pub rotatefirst: bool,
+
+    /// Restack every page's two halves on top of each other (turns a 1x4
+    /// strip into 2x2) instead of looking for double-page spreads.
+    #[arg(long)]
+    pub maximizestrips: bool,
+
+    /// Webtoon mode: join each chapter's images into one vertical strip and
+    /// cut it into screen-sized pages between panels. Implies left-to-right
+    /// order, white borders, no upscaling and no margin cropping.
+    #[arg(short = 'w', long)]
+    pub webtoon: bool,
+
+    /// Keep color pages in color instead of converting everything to
+    /// grayscale. Pages with no real color are still converted.
+    #[arg(long)]
+    pub forcecolor: bool,
+
+    /// With --forcepng and --forcecolor, save color pages as PNG as well.
+    #[arg(long = "force-png-rgb")]
+    pub force_png_rgb: bool,
+
+    /// Autocontrast color pages too.
+    #[arg(long)]
+    pub colorautocontrast: bool,
+
+    /// With --forcepng, store pages as 8-bit grayscale instead of at the
+    /// palette's own (smaller, less widely supported) bit depth.
+    #[arg(long)]
+    pub pnglegacy: bool,
+
+    /// With --forcepng, keep all 256 gray levels instead of quantizing to
+    /// the device palette.
+    #[arg(long)]
+    pub noquantize: bool,
+
+    /// Leave every image exactly as it is: no cropping, resizing or
+    /// recoding, whatever the profile and the other options say.
+    #[arg(long)]
+    pub noprocessing: bool,
+
+    /// Turn pages the opposite way to the reading order. For readers that
+    /// take the direction from the book; KOReader has its own setting.
+    #[arg(long)]
+    pub invertdirection: bool,
+
+    /// Start the book on the opposite side of a two-page (landscape) view,
+    /// to line double-page spreads up. KOReader ignores it.
+    #[arg(long)]
+    pub spreadshift: bool,
+
+    /// Show a single centered page in a two-page (landscape) view. KOReader
+    /// ignores it.
+    #[arg(long)]
+    pub onepagelandscape: bool,
+
+    /// For a Kobo profile's EPUB, name the file `.epub` instead of
+    /// `.kepub.epub` when the name is derived from the input.
+    #[arg(long)]
+    pub nokepub: bool,
+
+    /// Use this image as the book's cover instead of the first page. It is
+    /// processed like any cover (contrast, grayscale unless --forcecolor,
+    /// fitted to the device) and, in a CBZ, stored as the first image.
+    /// Without this, a folder named "Covers" beside the input is looked in:
+    /// an image there named like the input is its cover, or else the Nth
+    /// image is the cover of the Nth book beside the input.
+    #[arg(long)]
+    pub cover: Option<PathBuf>,
+
+    /// Join pairs of pages that are the two halves of one double-page
+    /// spread into a single image before anything else is done to them.
+    /// FILE is JSON as KCC's "Label Spreads" writes it — {"spreads": [12,
+    /// 40]} — each number the position, counting from 0 over the whole
+    /// book, of the first page of a pair. Without this, a file named like
+    /// the input plus ".json" beside it is used if there is one.
+    #[arg(long, value_name = "FILE")]
+    pub spreads: Option<PathBuf>,
+
+    /// Cut the front cover out of a wide first image (a jacket or spread
+    /// scan) for the book's cover, instead of using the whole image.
+    #[arg(long)]
+    pub smartcovercrop: bool,
+
+    /// Crop the book's cover to fill the screen instead of fitting inside it.
+    #[arg(long)]
+    pub coverfill: bool,
 
     /// Rotate double-page spreads clockwise instead of the default
     /// counter-clockwise.
@@ -130,8 +232,9 @@ pub struct Cli {
     #[arg(long)]
     pub eraserainbow: bool,
 
-    /// Output format.
-    #[arg(short, long, value_enum, default_value_t = Format::Epub)]
+    /// Output format. `auto` picks the device family's usual one: CBZ for
+    /// the four oldest Kindles, PDF for reMarkable, EPUB for everything else.
+    #[arg(short, long, value_enum, default_value_t = Format::Auto)]
     pub format: Format,
 
     /// Output file or directory.
@@ -193,6 +296,7 @@ pub enum Splitter {
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
+    Auto,
     Epub,
     Cbz,
     Pdf,

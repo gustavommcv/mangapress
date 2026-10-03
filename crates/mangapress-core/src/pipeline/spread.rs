@@ -1,25 +1,33 @@
 //! Double-page spread detection: split vs. rotate vs. leave alone.
 //!
-//! Port target: `ComicPageParser.splitCheck()` in KCC's `image.py` (GPLv3
+//! Upstream reference: `ComicPageParser.splitCheck()` in KCC's `image.py` (GPLv3
 //! upstream — spec only, see `docs/adr/0007-gplv3-boundary-kcc-image-rs.md`).
 //!
-//! Decision tree, given source `(width, height)` and device `(dst_width,
-//! dst_height)`:
+//! Decision tree, given the page's `(width, height)` *after* margin cropping
+//! (upstream crops before it looks for a spread, since KCC 12.0.0 — see
+//! [`crate::pipeline::process_page`]) and device `(dst_width, dst_height)`:
+//! 0. In `Rotate` mode only: a page whose orientation mismatches the device
+//!    and which already fits the device once turned (`width <= dst_height`
+//!    and `height <= dst_width`) is rotated whatever its aspect ratio —
+//!    upstream tests this before the aspect threshold below, so a landscape
+//!    page too close to square to count as a spread is still turned to fill
+//!    the screen. Confirmed against real KCC 12.0.0: a 1000x900 page on a
+//!    1072x1448 device comes out rotated (1072x1191), not upright (1072x965).
 //! 1. Not a spread at all (`Decision::Normal`) unless *both*:
 //!    - orientation mismatches the device (`(width > height) != (dst_width >
 //!      dst_height)`), and
 //!    - `width / height > SPREAD_ASPECT_THRESHOLD` (1.16).
-//! 2. If it is a spread: `width / height >= BISECT_THRESHOLD` (1.8) means
-//!    "too wide to usefully split" -> rotate instead, even in default Split
-//!    mode. Below 1.8, respect the user's `-r/--splitter` choice (Split /
-//!    Rotate / Both).
+//! 2. If it is a spread: `width / height >= ROTATE_ONLY_ASPECT_THRESHOLD`
+//!    (1.8) means "too wide to usefully split" -> rotate instead, even in
+//!    default Split mode. Below 1.8, respect the user's `-r/--splitter`
+//!    choice (Split / Rotate / Both).
 //! 3. Which half becomes "page one" when splitting depends on reading
 //!    direction — see [`crate::manga`].
 //!
 //! Webtoon mode bypasses this entirely (pages pass through as `Normal`).
 
 pub const SPREAD_ASPECT_THRESHOLD: f64 = 1.16;
-pub const BISECT_THRESHOLD: f64 = 1.8;
+pub const ROTATE_ONLY_ASPECT_THRESHOLD: f64 = 1.8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
@@ -41,14 +49,20 @@ pub fn decide(
     let (w, h) = (src.0 as f64, src.1 as f64);
     let src_landscape = src.0 > src.1;
     let dst_landscape = dst.0 > dst.1;
-    let is_spread = (src_landscape != dst_landscape) && (w / h > SPREAD_ASPECT_THRESHOLD);
+    let orientation_mismatch = src_landscape != dst_landscape;
+    use crate::pipeline::SplitterMode::*;
+
+    if orientation_mismatch && splitter == Rotate && src.0 <= dst.1 && src.1 <= dst.0 {
+        return Decision::Rotate;
+    }
+
+    let is_spread = orientation_mismatch && (w / h > SPREAD_ASPECT_THRESHOLD);
 
     if !is_spread {
         return Decision::Normal;
     }
 
-    let too_wide_to_split = w / h >= BISECT_THRESHOLD;
-    use crate::pipeline::SplitterMode::*;
+    let too_wide_to_split = w / h >= ROTATE_ONLY_ASPECT_THRESHOLD;
     match (too_wide_to_split, splitter) {
         (true, _) => Decision::Rotate,
         (false, Split) => Decision::Split,
@@ -61,12 +75,49 @@ pub fn decide(
 /// list of output pages it implies — this is `splitCheck()`'s payload
 /// construction, the part that actually crops/rotates pixels rather than
 /// just deciding to.
-pub fn execute(
-    img: &image::GrayImage,
+/// What an output page is, relative to the source page it came from —
+/// upstream's `-kcc-x` / `-kcc-b` / `-kcc-c` / `-kcc-a|d` file-name suffixes.
+/// The EPUB builder needs it to place pages on the right side of a two-page
+/// view (see [`crate::ebook::epub`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PageRole {
+    /// An ordinary page, not part of a spread.
+    #[default]
+    Normal,
+    /// The half of a split spread that is read first.
+    SplitFirst,
+    /// The half of a split spread that is read second.
+    SplitSecond,
+    /// A whole spread, rotated to fill the screen.
+    Rotated,
+}
+
+/// The [`PageRole`] of each page [`execute`] returns for `decision`, in the
+/// same order.
+pub fn roles(decision: Decision) -> &'static [PageRole] {
+    match decision {
+        Decision::Normal => &[PageRole::Normal],
+        Decision::Split => &[PageRole::SplitFirst, PageRole::SplitSecond],
+        Decision::Rotate => &[PageRole::Rotated],
+        Decision::Both => &[
+            PageRole::SplitFirst,
+            PageRole::SplitSecond,
+            PageRole::Rotated,
+        ],
+    }
+}
+
+/// An owned image of any pixel type: spreads are split and rotated while the
+/// page is still RGB (see [`crate::pipeline::process_page`]), and the tests
+/// below exercise the same code on grayscale.
+type Buffer<P> = image::ImageBuffer<P, Vec<<P as image::Pixel>::Subpixel>>;
+
+pub fn execute<P: image::Pixel + 'static>(
+    img: &Buffer<P>,
     decision: Decision,
     manga_style: bool,
     rotate_right: bool,
-) -> Vec<image::GrayImage> {
+) -> Vec<Buffer<P>> {
     match decision {
         Decision::Normal => vec![img.clone()],
         Decision::Split => {
@@ -86,7 +137,7 @@ pub fn execute(
 /// `splitCheck()`'s `leftbox`/`rightbox` geometry exactly. Order respects
 /// reading direction: right-to-left reads the second (right or bottom)
 /// half first.
-fn split(img: &image::GrayImage, manga_style: bool) -> (image::GrayImage, image::GrayImage) {
+fn split<P: image::Pixel + 'static>(img: &Buffer<P>, manga_style: bool) -> (Buffer<P>, Buffer<P>) {
     let (w, h) = img.dimensions();
     let (first_box, second_box) = if w > h {
         ((0, 0, w / 2, h), (w / 2, 0, w - w / 2, h))
@@ -109,7 +160,7 @@ fn split(img: &image::GrayImage, manga_style: bool) -> (image::GrayImage, image:
 /// Default direction is counter-clockwise, matching upstream's
 /// `image.rotate(90, ...)` (PIL rotates counter-clockwise for positive
 /// angles); `rotate_right` matches `--rotateright`'s `rotate(-90, ...)`.
-fn rotate(img: &image::GrayImage, rotate_right: bool) -> image::GrayImage {
+fn rotate<P: image::Pixel + 'static>(img: &Buffer<P>, rotate_right: bool) -> Buffer<P> {
     if rotate_right {
         image::imageops::rotate90(img)
     } else {
@@ -242,5 +293,53 @@ mod tests {
         let img = landscape_page_with_left_right_halves();
         let out = execute(&img, Decision::Both, false, false);
         assert_eq!(out.len(), 3);
+    }
+
+    #[test]
+    fn rotate_mode_turns_a_page_that_fits_once_turned_whatever_its_aspect() {
+        // 1000x900 is 1.11:1 — under the 1.16 spread threshold — but it is
+        // landscape on a portrait device and fits it rotated.
+        assert_eq!(
+            decide((1000, 900), PORTRAIT_DEVICE, SplitterMode::Rotate),
+            Decision::Rotate
+        );
+        // The same page is left alone in the other two modes...
+        assert_eq!(
+            decide((1000, 900), PORTRAIT_DEVICE, SplitterMode::Split),
+            Decision::Normal
+        );
+        assert_eq!(
+            decide((1000, 900), PORTRAIT_DEVICE, SplitterMode::Both),
+            Decision::Normal
+        );
+        // ...and so is one that would not fit the device once turned.
+        assert_eq!(
+            decide((1500, 1400), PORTRAIT_DEVICE, SplitterMode::Rotate),
+            Decision::Normal
+        );
+    }
+
+    #[test]
+    fn roles_name_each_page_execute_returns_in_order() {
+        let img = image::GrayImage::new(200, 100);
+        for decision in [
+            Decision::Normal,
+            Decision::Split,
+            Decision::Rotate,
+            Decision::Both,
+        ] {
+            assert_eq!(
+                roles(decision).len(),
+                execute(&img, decision, true, false).len()
+            );
+        }
+        assert_eq!(
+            roles(Decision::Both),
+            [
+                PageRole::SplitFirst,
+                PageRole::SplitSecond,
+                PageRole::Rotated
+            ]
+        );
     }
 }

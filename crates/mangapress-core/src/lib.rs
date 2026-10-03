@@ -7,6 +7,7 @@
 //! behind each boundary and behavioral choice.
 
 pub mod archive;
+pub mod color;
 pub mod contrast;
 pub mod crop;
 pub mod ebook;
@@ -19,7 +20,9 @@ pub mod pipeline;
 pub mod profile;
 pub mod quantize;
 pub mod rainbow;
+pub mod resample;
 pub mod resize;
+pub mod webtoon;
 
 pub use error::{Error, Result};
 pub use profile::Profile;

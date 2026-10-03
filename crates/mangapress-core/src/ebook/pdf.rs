@@ -51,7 +51,13 @@ pub fn build_pdf(chapters: &[Chapter], options: &PdfOptions) -> Result<Vec<u8>> 
         for page in &chapter.pages {
             let decoded = image::load_from_memory(&page.bytes)?;
             let (width_px, height_px) = (decoded.width(), decoded.height());
-            let normalized = DynamicImage::ImageLuma8(decoded.to_luma8());
+            // Grayscale pages as single-channel images; a color page (only
+            // there with `--forcecolor`) stays RGB.
+            let normalized = if decoded.color().has_color() {
+                DynamicImage::ImageRgb8(decoded.to_rgb8())
+            } else {
+                DynamicImage::ImageLuma8(decoded.to_luma8())
+            };
 
             let raw_image = RawImage::from_dynamic_image(normalized).map_err(Error::Pdf)?;
             let xobject_id = doc.add_image(&raw_image);
@@ -104,6 +110,7 @@ mod tests {
                 .map(|&(w, h)| Page {
                     extension: "png".to_string(),
                     bytes: tiny_png(w, h),
+                    ..Default::default()
                 })
                 .collect(),
         }

@@ -10,6 +10,7 @@ repository = "https://github.com/gustavommcv/mangapress"
 
 [workspace.dependencies]
 image = "0.25"
+png = "0.18"
 imageproc = "0.25"
 rustfft = "6"
 zip = "2"

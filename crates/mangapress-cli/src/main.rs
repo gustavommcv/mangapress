@@ -5,13 +5,16 @@ use anyhow::{bail, Context};
 use args::{Cli, Cropping, Format, InterPanelCrop, MetadataTitle, Splitter};
 use clap::{error::ErrorKind, Parser};
 use mangapress_core::archive::{cbz::extract_cbz, folder::read_folder, SourceEntry};
-use mangapress_core::ebook::{cbz_out, epub, group_into_chapters, pdf, Chapter, Page};
+use mangapress_core::ebook::{
+    cbz_out, cover, epub, group_into_chapters, pdf, spreads, Chapter, Page,
+};
 use mangapress_core::manga::ReadingDirection;
 use mangapress_core::metadata::{self, MetadataTitleMode};
 use mangapress_core::pipeline::{
-    process_page, CroppingMode, OutputFormat, PipelineOptions, SplitterMode,
+    default_jpeg_quality, process_page, CroppingMode, OutputFormat, PipelineOptions, ProcessedPage,
+    SplitterMode,
 };
-use mangapress_core::profile::Profile;
+use mangapress_core::profile::{Family, Profile};
 use protocol::{event_write_failure, EventSink, RunFailure};
 use rayon::prelude::*;
 use serde_json::json;
@@ -117,8 +120,227 @@ fn absolute_display(path: &Path) -> String {
     .into_owned()
 }
 
+/// `SystemTime` as `YYYY-MM-DDThh:mm:ssZ`, for the EPUB's required
+/// `dcterms:modified`. Hand-rolled (days-since-epoch to a civil date) rather
+/// than pulling in a date-time crate for this one field. A clock set before
+/// 1970 reads as the epoch.
+fn utc_timestamp(now: std::time::SystemTime) -> String {
+    let seconds = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let (days, second_of_day) = (seconds / 86_400, seconds % 86_400);
+
+    // Days since 1970-01-01 to a proleptic Gregorian date, counting in
+    // 400-year eras that start on 1 March so the leap day falls last.
+    let shifted = days + 719_468;
+    let era = shifted / 146_097;
+    let day_of_era = shifted % 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = year_of_era + era * 400 + u64::from(month <= 2);
+
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        second_of_day / 3_600,
+        second_of_day % 3_600 / 60,
+        second_of_day % 60
+    )
+}
+
+/// The spread labels upstream's "Label Spreads" window leaves beside a
+/// source: a file named like the source plus `.json`.
+fn spread_labels_beside(input: &Path) -> Option<PathBuf> {
+    // Rebuilt from its components so that a trailing separator on a folder
+    // doesn't end up in the middle of the name.
+    let mut name = input.components().collect::<PathBuf>().into_os_string();
+    name.push(".json");
+    let path = PathBuf::from(name);
+    path.is_file().then_some(path)
+}
+
+/// The positions in a spread-label file: `{"spreads": [12, 40]}`.
+fn read_spread_labels(path: &Path) -> Result<Vec<usize>, String> {
+    let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    let positions = value
+        .get("spreads")
+        .and_then(|spreads| spreads.as_array())
+        .ok_or_else(|| "it has no \"spreads\" list".to_string())?;
+    positions
+        .iter()
+        .map(|position| {
+            position
+                .as_u64()
+                .map(|position| position as usize)
+                .ok_or_else(|| format!("{position} is not a page position"))
+        })
+        .collect()
+}
+
+/// One recoverable problem, as a protocol event or a line on the terminal.
+fn warn<W: std::io::Write + Send>(
+    events: &EventSink<W>,
+    code: &str,
+    stage: &str,
+    path: &str,
+    message: &str,
+) -> anyhow::Result<()> {
+    if events.enabled() {
+        events
+            .emit(
+                "warning",
+                json!({
+                    "severity": "warning",
+                    "code": code,
+                    "stage": stage,
+                    "path": path,
+                    "recoverable": true,
+                    "message": message,
+                }),
+            )
+            .map_err(event_write_failure)?;
+    } else {
+        eprintln!("warning: {message}");
+    }
+    Ok(())
+}
+
+/// The folder a book's own cover is looked for in, beside the book.
+const COVERS_FOLDER: &str = "Covers";
+
+/// The cover a `Covers` folder beside `input` holds for it, if any —
+/// upstream's convention for giving each volume of a series its own cover
+/// without naming one on the command line.
+///
+/// Upstream matches by position alone: the folder's Nth image, in natural
+/// order, goes to the Nth book beside it. That is kept, with two changes:
+/// - An image named like the book (`Vol 3.jpg` for `Vol 3.cbz`) is that
+///   book's cover, wherever it sorts. And once any image in the folder is
+///   named after a book, position is not used at all: a book without an
+///   image of its own then has no custom cover, rather than the cover of
+///   whichever book happens to line up with it.
+/// - What counts as "a book beside it" is the input's own kind: files with
+///   its extension, or — for a folder — the other folders, leaving out
+///   `Covers` itself (which upstream counts, giving every folder that sorts
+///   after it the next book's cover). Earlier conversions' output (`_kcc`
+///   in the name, as upstream skips, and this tool's own ` (mangapress`)
+///   doesn't count either.
+fn cover_by_convention(input: &Path) -> Option<PathBuf> {
+    let input = std::path::absolute(input).ok()?;
+    let parent = input.parent()?;
+    let covers_dir = parent.join(COVERS_FOLDER);
+    if !covers_dir.is_dir() {
+        return None;
+    }
+    let names_in = |dir: &Path, keep: &dyn Fn(&Path) -> bool| -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| keep(path))
+            .filter_map(|path| Some(path.file_name()?.to_string_lossy().into_owned()))
+            .collect();
+        names.sort_by(|a, b| mangapress_core::natural_sort::compare(a, b));
+        names
+    };
+
+    let covers = names_in(&covers_dir, &|path| {
+        path.is_file() && mangapress_core::archive::has_image_extension(path)
+    });
+
+    let is_folder = input.is_dir();
+    let extension = input.extension().map(|e| e.to_ascii_lowercase());
+    let books = names_in(parent, &|path| {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if name.contains("_kcc") || name.contains(" (mangapress") {
+            return false;
+        }
+        if is_folder {
+            path.is_dir() && name != COVERS_FOLDER
+        } else {
+            path.is_file() && path.extension().map(|e| e.to_ascii_lowercase()) == extension
+        }
+    });
+
+    // A folder's name is its title whole; a file's, without the extension.
+    let book_title = |name: &str| -> String {
+        if is_folder {
+            name.to_lowercase()
+        } else {
+            Path::new(name)
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase()
+        }
+    };
+    let cover_title = |name: &str| -> String {
+        Path::new(name)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase()
+    };
+
+    let name = input.file_name()?.to_string_lossy().into_owned();
+    let title = book_title(&name);
+    if let Some(cover) = covers.iter().find(|cover| cover_title(cover) == title) {
+        return Some(covers_dir.join(cover));
+    }
+    let named_after_books = covers.iter().any(|cover| {
+        let cover = cover_title(cover);
+        books.iter().any(|book| book_title(book) == cover)
+    });
+    if named_after_books {
+        return None;
+    }
+    let position = books.iter().position(|book| *book == name)?;
+    covers.get(position).map(|cover| covers_dir.join(cover))
+}
+
+/// What `--format auto` means for a device: upstream's own defaults, except
+/// that a Kindle gets EPUB where upstream would go on to MOBI (which this
+/// tool doesn't write).
+fn automatic_format(profile: &Profile) -> Format {
+    match profile.family() {
+        Family::Kindle if matches!(profile.code, "K1" | "K2" | "K34" | "KDX") => Format::Cbz,
+        Family::Remarkable => Format::Pdf,
+        _ => Format::Epub,
+    }
+}
+
+/// Upstream's file name for a Kobo EPUB derived from an input *file*: every
+/// run of characters that aren't letters, digits or underscores becomes one
+/// underscore.
+fn kobo_safe_stem(stem: &str) -> String {
+    let mut out = String::with_capacity(stem.len());
+    let mut in_run = false;
+    for c in stem.chars() {
+        if c.is_alphanumeric() || c == '_' {
+            out.push(c);
+            in_run = false;
+        } else if !in_run {
+            out.push('_');
+            in_run = true;
+        }
+    }
+    out
+}
+
 fn format_name(format: Format) -> &'static str {
     match format {
+        Format::Auto => unreachable!("--format auto is resolved before any format is named"),
         Format::Epub => "epub",
         Format::Cbz => "cbz",
         Format::Pdf => "pdf",
@@ -143,20 +365,25 @@ struct PageProcessingFailure {
 fn process_chapter_pages(
     pages: &[Page],
     options: &PipelineOptions,
+    first_chapter: bool,
     on_page_done: impl Fn(usize, usize) -> std::io::Result<()> + Sync,
 ) -> Result<Vec<Page>, PageProcessingFailure> {
     let progress = Mutex::new((vec![false; pages.len()], 0usize));
-    let outputs: Vec<Vec<(String, Vec<u8>)>> = pages
+    let outputs: Vec<Vec<ProcessedPage>> = pages
         .par_iter()
         .enumerate()
         .map(|(page_index, source_page)| {
             let page_number = page_index + 1;
-            let result = process_page(&source_page.bytes, options).map_err(|error| {
-                PageProcessingFailure {
-                    page: page_number,
-                    diagnostic: error.to_string(),
-                }
-            })?;
+            // The book's first page is the one upstream leaves uncropped
+            // when it is a color page (a cover).
+            let is_first_page = first_chapter && page_index == 0;
+            let result =
+                process_page(&source_page.bytes, options, is_first_page).map_err(|error| {
+                    PageProcessingFailure {
+                        page: page_number,
+                        diagnostic: error.to_string(),
+                    }
+                })?;
             let mut progress = progress.lock().map_err(|_| PageProcessingFailure {
                 page: page_number,
                 diagnostic: "page progress lock was poisoned".to_string(),
@@ -176,8 +403,14 @@ fn process_chapter_pages(
 
     let mut flattened = Vec::with_capacity(pages.len());
     for page_outputs in outputs {
-        for (extension, bytes) in page_outputs {
-            flattened.push(Page { extension, bytes });
+        for (piece, page) in page_outputs.into_iter().enumerate() {
+            flattened.push(Page {
+                extension: page.extension,
+                bytes: page.bytes,
+                black_background: page.black_background,
+                role: page.role,
+                continues_source_page: piece > 0,
+            });
         }
     }
     Ok(flattened)
@@ -356,6 +589,12 @@ fn run<W: std::io::Write + Send>(
         );
     }
 
+    let mut cli = cli;
+    if cli.format == Format::Auto {
+        cli.format = automatic_format(profile);
+    }
+    let cli = cli;
+
     if cli.nested_toc && cli.format != Format::Epub {
         *failure = RunFailure::new(
             "nested_toc_unsupported_format",
@@ -524,7 +763,183 @@ fn run<W: std::io::Write + Send>(
         bail!("no recognized page images found in {}", input.display());
     }
 
-    let source_chapters = group_into_chapters(source_entries);
+    // Upstream's two warnings about what it was given. Neither stops the run.
+    let device = profile.effective_resolution(cli.customwidth, cli.customheight);
+    let (smaller, measured) =
+        mangapress_core::archive::smaller_than_device(&source_entries, device);
+    let mut input_warnings: Vec<(&str, String)> = Vec::new();
+    if mangapress_core::archive::looks_already_converted(&source_entries) {
+        input_warnings.push((
+            "source_already_converted",
+            "These pages look like KCC already converted them. Converting them again will lower their quality.".to_string(),
+        ));
+    }
+    // Upstream leaves Kindle Scribe profiles out of this one: their screens
+    // are larger than most scans.
+    if smaller * 4 > measured
+        && !cli.upscale
+        && !cli.stretch
+        && !cli.webtoon
+        && !profile.code.starts_with("KS")
+    {
+        input_warnings.push((
+            "images_smaller_than_device",
+            format!(
+                "{smaller} of {measured} pages are smaller than the device's {}x{} screen. Consider --upscale (or --stretch) to make them easier to read.",
+                device.0, device.1
+            ),
+        ));
+    }
+    for (code, message) in input_warnings {
+        if events.enabled() {
+            events
+                .emit(
+                    "warning",
+                    json!({
+                        "severity": "warning",
+                        "code": code,
+                        "stage": "inspect",
+                        "path": input_path.clone(),
+                        "recoverable": true,
+                        "message": message,
+                    }),
+                )
+                .map_err(event_write_failure)?;
+        } else {
+            eprintln!("warning: {message}");
+        }
+    }
+
+    // A cover of the user's own choosing — named with `--cover`, or else
+    // found in a `Covers` folder beside the input — read now so that a bad
+    // path fails before any page is processed.
+    let cover_path = cli.cover.clone().or_else(|| {
+        let found = cover_by_convention(&input)?;
+        if !quiet {
+            eprintln!("using {} as the cover", found.display());
+        }
+        Some(found)
+    });
+    let custom_cover: Option<Vec<u8>> = match &cover_path {
+        Some(path) => match std::fs::read(path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) => {
+                *failure = RunFailure::new(
+                    "cover_read_failed",
+                    "inspect",
+                    true,
+                    "Couldn't read the cover image.",
+                    format!("reading cover image {}: {error}", path.display()),
+                )
+                .with_path(absolute_display(path));
+                bail!("reading cover image {}: {error}", path.display());
+            }
+        },
+        None => None,
+    };
+
+    let mut source_chapters = group_into_chapters(source_entries);
+
+    // Pages labelled as the two halves of a spread — in the file `--spreads`
+    // names, or else the one upstream's "Label Spreads" leaves beside the
+    // input — are joined before anything looks at them, the cover included.
+    let spread_labels = cli
+        .spreads
+        .clone()
+        .map(|path| (path, true))
+        .or_else(|| spread_labels_beside(&input).map(|path| (path, false)));
+    let mut joined_spreads = spreads::Joined::default();
+    if let Some((path, named)) = spread_labels {
+        match read_spread_labels(&path) {
+            Ok(positions) => {
+                let right_to_left = cli.manga_style && !cli.webtoon;
+                joined_spreads = match spreads::join_labelled_spreads(
+                    &mut source_chapters,
+                    &positions,
+                    right_to_left,
+                ) {
+                    Ok(joined) => joined,
+                    Err(error) => {
+                        *failure = RunFailure::new(
+                            "spread_join_failed",
+                            "inspect",
+                            true,
+                            "Couldn't join the pages labelled as a spread.",
+                            format!("joining labelled spreads: {error}"),
+                        )
+                        .with_path(absolute_display(&path));
+                        bail!("joining labelled spreads: {error}");
+                    }
+                };
+                if !quiet && !joined_spreads.joined.is_empty() {
+                    eprintln!(
+                        "joined {} labelled spread(s) from {}",
+                        joined_spreads.joined.len(),
+                        path.display()
+                    );
+                }
+                if !joined_spreads.skipped.is_empty() {
+                    let reasons: Vec<String> = joined_spreads
+                        .skipped
+                        .iter()
+                        .map(|(position, reason)| match reason {
+                            spreads::Skipped::NoPageAfter => {
+                                format!("{position} has no page after it")
+                            }
+                            spreads::Skipped::PartOfPreviousPair => {
+                                format!("{position} is already the second half of a pair")
+                            }
+                        })
+                        .collect();
+                    warn(
+                        events,
+                        "spread_labels_skipped",
+                        "inspect",
+                        &absolute_display(&path),
+                        &format!(
+                            "Some labelled spreads could not be joined: position {}.",
+                            reasons.join("; position ")
+                        ),
+                    )?;
+                }
+            }
+            Err(reason) if named => {
+                *failure = RunFailure::new(
+                    "spread_labels_read_failed",
+                    "inspect",
+                    true,
+                    "Couldn't read the spread labels.",
+                    format!("reading spread labels {}: {reason}", path.display()),
+                )
+                .with_path(absolute_display(&path));
+                bail!("reading spread labels {}: {reason}", path.display());
+            }
+            // A file that merely happens to sit beside the input and isn't
+            // spread labels is not this book's problem.
+            Err(reason) => warn(
+                events,
+                "spread_labels_ignored",
+                "inspect",
+                &absolute_display(&path),
+                &format!(
+                    "Ignored {}: it is not a list of spread labels ({reason}).",
+                    path.display()
+                ),
+            )?,
+        }
+    }
+
+    // The cover is made from the book's first image as it came, apart from
+    // whatever page processing does to that image later.
+    // Webtoon mode has no separate cover upstream (its first image is a
+    // strip, not a cover); the first cut page stands in for one.
+    let cover_source: Option<Vec<u8>> = custom_cover.clone().or_else(|| {
+        source_chapters
+            .iter()
+            .find_map(|chapter| chapter.pages.first())
+            .filter(|_| !cli.webtoon)
+            .map(|page| page.bytes.clone())
+    });
     let total_chapters = source_chapters.len();
     let total_pages: usize = source_chapters.iter().map(|c| c.pages.len()).sum();
     if !quiet {
@@ -553,7 +968,19 @@ fn run<W: std::io::Write + Send>(
             }),
         )
         .map_err(event_write_failure)?;
-    let extension = format_name(cli.format);
+    // A Kobo profile's EPUB is a "kepub" by name, as upstream names it —
+    // unless asked not to, or the resolution is custom (upstream no longer
+    // sees a Kobo profile then).
+    let kepub = cli.format == Format::Epub
+        && profile.family() == Family::Kobo
+        && !cli.nokepub
+        && cli.customwidth.unwrap_or(0) == 0
+        && cli.customheight.unwrap_or(0) == 0;
+    let extension = if kepub {
+        "kepub.epub"
+    } else {
+        format_name(cli.format)
+    };
     let output_path = match &cli.output {
         Some(path) if path.is_dir() => {
             path.join(format!("{}.{extension}", sanitize_filename(&title)))
@@ -579,6 +1006,13 @@ fn run<W: std::io::Write + Send>(
             path.join(format!("{}.{extension}", sanitize_filename(&title)))
         }
         Some(path) => path.clone(),
+        None if kepub && input.is_file() => {
+            let stem = input
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            input.with_file_name(format!("{}.{extension}", kobo_safe_stem(&stem)))
+        }
         None => input.with_extension(extension),
     };
     // With no --output (or an explicit one matching the input), converting
@@ -666,11 +1100,55 @@ fn run<W: std::io::Write + Send>(
         return Ok(());
     }
 
+    // Webtoon mode works on strips, not pages: each chapter's images are
+    // joined and cut again before anything else happens to them, so the
+    // page count from here on is the cut pages'.
+    let (source_chapters, total_pages) = if cli.webtoon {
+        let device = profile.effective_resolution(cli.customwidth, cli.customheight);
+        let mut chapters = source_chapters;
+        for chapter in &mut chapters {
+            let sources: Vec<&[u8]> = chapter
+                .pages
+                .iter()
+                .map(|page| page.bytes.as_slice())
+                .collect();
+            match mangapress_core::webtoon::pages_from_chapter(&sources, device) {
+                Ok(pages) => {
+                    chapter.pages = pages
+                        .into_iter()
+                        .map(|bytes| Page {
+                            extension: "png".to_string(),
+                            bytes,
+                            ..Default::default()
+                        })
+                        .collect();
+                }
+                Err(error) => {
+                    *failure = RunFailure::new(
+                        "webtoon_split_failed",
+                        "process",
+                        true,
+                        format!("Couldn't cut chapter '{}' into pages.", chapter.title),
+                        format!("cutting chapter '{}' into pages: {error}", chapter.title),
+                    )
+                    .with_manga(title.clone())
+                    .with_chapter(chapter.title.clone());
+                    bail!("cutting chapter '{}' into pages: {error}", chapter.title);
+                }
+            }
+        }
+        let total = chapters.iter().map(|chapter| chapter.pages.len()).sum();
+        (chapters, total)
+    } else {
+        (source_chapters, total_pages)
+    };
+
     let pipeline_options = PipelineOptions {
         profile,
         width_override: cli.customwidth,
         height_override: cli.customheight,
-        manga_style: cli.manga_style,
+        // Upstream's webtoon mode forces these four whatever was asked for.
+        manga_style: cli.manga_style && !cli.webtoon,
         cropping: match cli.cropping {
             Cropping::Disabled => CroppingMode::Disabled,
             Cropping::Margins => CroppingMode::Margins,
@@ -693,13 +1171,25 @@ fn run<W: std::io::Write + Send>(
             Splitter::Rotate => SplitterMode::Rotate,
             Splitter::Both => SplitterMode::Both,
         },
-        upscale: cli.upscale,
+        upscale: cli.upscale && !cli.webtoon,
         stretch: cli.stretch,
         wallpaper: cli.wallpaper,
-        white_borders: cli.whiteborders,
+        white_borders: cli.whiteborders || cli.webtoon,
+        black_borders: cli.blackborders && !cli.webtoon,
+        webtoon: cli.webtoon,
+        no_rotate: cli.norotate,
+        rotate_first: cli.rotatefirst,
+        maximize_strips: cli.maximizestrips,
+        color_autocontrast: cli.colorautocontrast,
+        force_color: cli.forcecolor,
+        force_png_rgb: cli.force_png_rgb,
+        png_legacy: cli.pnglegacy,
+        no_quantize: cli.noquantize,
+        no_processing: cli.noprocessing,
         rotate_right: cli.rotateright,
         force_png: cli.forcepng,
         output_format: match cli.format {
+            Format::Auto => unreachable!("--format auto was resolved above"),
             Format::Epub => OutputFormat::Epub,
             Format::Cbz => OutputFormat::Cbz,
             Format::Pdf => OutputFormat::Pdf,
@@ -756,6 +1246,7 @@ fn run<W: std::io::Write + Send>(
         let pages = match process_chapter_pages(
             &chapter.pages,
             &pipeline_options,
+            chapter_index == 0,
             |done_in_chapter, page_number| {
                 let done = source_pages_done + done_in_chapter;
                 if events.enabled() {
@@ -879,18 +1370,82 @@ fn run<W: std::io::Write + Send>(
     .with_manga(title.clone())
     .with_path(output_path_absolute.clone());
     let result_author = author.clone();
+    // The cover, and whether upstream would also put it in a CBZ: only when
+    // it is not simply the first page (the user's own, or smart-cropped).
+    let cover: Option<(Vec<u8>, bool)> = match cover_source.as_deref() {
+        Some(source) if cli.format != Format::Pdf => {
+            match cover::build_cover_reporting(
+                source,
+                &cover::CoverOptions {
+                    target: pipeline_options.target_resolution(),
+                    right_to_left: cli.manga_style && !cli.webtoon,
+                    smart_crop: cli.smartcovercrop,
+                    fill: cli.coverfill,
+                    force_color: cli.forcecolor,
+                    jpeg_quality: cli
+                        .jpeg_quality
+                        .unwrap_or_else(|| default_jpeg_quality(profile)),
+                },
+            ) {
+                Ok(cover) => Some(cover),
+                Err(error) => {
+                    *failure = RunFailure::new(
+                        "cover_build_failed",
+                        "package",
+                        true,
+                        "Couldn't make the cover from that image.",
+                        format!("building the cover: {error}"),
+                    )
+                    .with_manga(title.clone());
+                    bail!("building the cover: {error}");
+                }
+            }
+        }
+        _ => None,
+    };
+
     let output_result = match cli.format {
+        Format::Auto => unreachable!("--format auto was resolved above"),
         Format::Epub => epub::build_epub(
             &processed_chapters,
             &epub::EpubOptions {
                 title: title.clone(),
-                author: author.clone(),
+                authors: resolved.authors,
                 language: cli.language.clone(),
                 reading_direction: ReadingDirection {
-                    right_to_left: cli.manga_style,
+                    right_to_left: cli.manga_style && !cli.webtoon,
                 },
                 description: resolved.summary,
                 nested_toc: cli.nested_toc,
+                kindle: profile.family() == Family::Kindle,
+                // Upstream's Kindle fixed-layout block is for a Kindle
+                // profile at its own resolution; overriding either
+                // dimension makes it upstream's "Custom" profile, which
+                // gets none.
+                kindle_resolution: (profile.family() == Family::Kindle
+                    && cli.customwidth.unwrap_or(0) == 0
+                    && cli.customheight.unwrap_or(0) == 0)
+                    .then_some((profile.width, profile.height)),
+                invert_direction: cli.invertdirection,
+                spread_shift: cli.spreadshift,
+                one_page_landscape: cli.onepagelandscape,
+                cover: cover.as_ref().map(|(bytes, _)| bytes.clone()),
+                // A bookmark counts source pages; joining spreads moved
+                // the ones after each pair up by one.
+                bookmarks: comic_info
+                    .as_ref()
+                    .map(|info| {
+                        info.bookmarks
+                            .iter()
+                            .map(|(page, title)| {
+                                let page = joined_spreads.position_after(*page as usize);
+                                (page as u32, title.clone())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                series: resolved.series.map(|name| (name, resolved.series_position)),
+                modified: utc_timestamp(std::time::SystemTime::now()),
             },
         )?,
         Format::Cbz => {
@@ -898,7 +1453,11 @@ fn run<W: std::io::Write + Send>(
                 .keepcomicinfo
                 .then_some(comic_info_xml.as_deref())
                 .flatten();
-            cbz_out::build_cbz(&processed_chapters, keep_xml)?
+            let cbz_cover = cover
+                .as_ref()
+                .filter(|(_, smart_cropped)| custom_cover.is_some() || *smart_cropped)
+                .map(|(bytes, _)| bytes.as_slice());
+            cbz_out::build_cbz(&processed_chapters, keep_xml, cbz_cover)?
         }
         Format::Pdf => pdf::build_pdf(
             &processed_chapters,
@@ -994,6 +1553,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn automatic_format_follows_the_device_family() {
+        let format = |code: &str| automatic_format(Profile::by_code(code).unwrap());
+        for code in ["K1", "K2", "K34", "KDX"] {
+            assert_eq!(format(code), Format::Cbz, "{code}");
+        }
+        assert_eq!(format("K11"), Format::Epub);
+        assert_eq!(format("KoC"), Format::Epub);
+        assert_eq!(format("Rmk2"), Format::Pdf);
+        assert_eq!(format("OTHER"), Format::Epub);
+    }
+
+    #[test]
+    fn kobo_safe_stem_collapses_everything_but_word_characters() {
+        assert_eq!(kobo_safe_stem("My Book (v1)"), "My_Book_v1_");
+        assert_eq!(kobo_safe_stem("already_safe_01"), "already_safe_01");
+        assert_eq!(kobo_safe_stem("君の名は - 1"), "君の名は_1");
+    }
+
+    #[test]
+    fn utc_timestamp_formats_known_instants() {
+        let at = |seconds: u64| {
+            utc_timestamp(std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds))
+        };
+        assert_eq!(at(0), "1970-01-01T00:00:00Z");
+        // A leap day, the day after it, and a year boundary.
+        assert_eq!(at(1_709_164_800), "2024-02-29T00:00:00Z");
+        assert_eq!(at(1_709_251_199), "2024-02-29T23:59:59Z");
+        assert_eq!(at(1_709_251_200), "2024-03-01T00:00:00Z");
+        assert_eq!(at(1_790_998_496), "2026-10-03T03:34:56Z");
+        assert_eq!(at(4_102_444_799), "2099-12-31T23:59:59Z");
+    }
+
+    #[test]
     fn sanitize_filename_replaces_every_reserved_character() {
         assert_eq!(
             sanitize_filename(r#"a/b\c:d*e?f"g<h>i|j"#),
@@ -1007,6 +1599,139 @@ mod tests {
             sanitize_filename("Chainsaw Man - Vol.01"),
             "Chainsaw Man - Vol.01"
         );
+    }
+
+    /// A series folder: the named books (a name ending in `/` is a folder)
+    /// and the named images in its `Covers` folder.
+    fn series(books: &[&str], covers: &[&str]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for book in books {
+            match book.strip_suffix('/') {
+                Some(folder) => std::fs::create_dir(dir.path().join(folder)).unwrap(),
+                None => std::fs::write(dir.path().join(book), b"x").unwrap(),
+            }
+        }
+        std::fs::create_dir(dir.path().join(COVERS_FOLDER)).unwrap();
+        for cover in covers {
+            std::fs::write(dir.path().join(COVERS_FOLDER).join(cover), b"x").unwrap();
+        }
+        dir
+    }
+
+    fn cover_for(dir: &tempfile::TempDir, book: &str) -> Option<String> {
+        let found = cover_by_convention(&dir.path().join(book))?;
+        assert_eq!(found.parent().unwrap(), dir.path().join(COVERS_FOLDER));
+        Some(found.file_name().unwrap().to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn spread_labels_are_looked_for_under_the_inputs_own_name_plus_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Vol 1.cbz");
+        let folder = dir.path().join("Vol 2");
+        std::fs::write(&file, b"x").unwrap();
+        std::fs::create_dir(&folder).unwrap();
+        assert_eq!(spread_labels_beside(&file), None);
+
+        std::fs::write(dir.path().join("Vol 1.cbz.json"), b"{}").unwrap();
+        std::fs::write(dir.path().join("Vol 2.json"), b"{}").unwrap();
+        assert_eq!(
+            spread_labels_beside(&file),
+            Some(dir.path().join("Vol 1.cbz.json"))
+        );
+        assert_eq!(
+            spread_labels_beside(&folder),
+            Some(dir.path().join("Vol 2.json"))
+        );
+        // A trailing separator on the folder changes nothing.
+        let with_separator = PathBuf::from(format!("{}/", folder.display()));
+        assert_eq!(
+            spread_labels_beside(&with_separator),
+            Some(dir.path().join("Vol 2.json"))
+        );
+    }
+
+    #[test]
+    fn spread_labels_are_a_list_of_page_positions_under_spreads() {
+        let dir = tempfile::tempdir().unwrap();
+        let read = |text: &str| {
+            let path = dir.path().join("labels.json");
+            std::fs::write(&path, text).unwrap();
+            read_spread_labels(&path)
+        };
+        assert_eq!(read(r#"{"spreads": [12, 40]}"#), Ok(vec![12, 40]));
+        assert_eq!(read(r#"{"spreads": []}"#), Ok(vec![]));
+        // Anything else is refused rather than guessed at.
+        assert!(read(r#"{"pages": [1]}"#).is_err());
+        assert!(read(r#"{"spreads": [1, -2]}"#).is_err());
+        assert!(read(r#"{"spreads": ["3"]}"#).is_err());
+        assert!(read("not json").is_err());
+        assert!(read_spread_labels(&dir.path().join("missing.json")).is_err());
+    }
+
+    #[test]
+    fn without_a_covers_folder_there_is_no_cover_by_convention() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Vol 1.cbz"), b"x").unwrap();
+        assert_eq!(cover_by_convention(&dir.path().join("Vol 1.cbz")), None);
+    }
+
+    #[test]
+    fn covers_go_to_books_by_position_in_natural_order() {
+        let dir = series(
+            &["Vol 1.cbz", "Vol 2.cbz", "Vol 10.cbz", "notes.txt"],
+            &["c.png", "a.jpg", "b.jpg", "readme.txt"],
+        );
+        assert_eq!(cover_for(&dir, "Vol 1.cbz").as_deref(), Some("a.jpg"));
+        assert_eq!(cover_for(&dir, "Vol 2.cbz").as_deref(), Some("b.jpg"));
+        assert_eq!(cover_for(&dir, "Vol 10.cbz").as_deref(), Some("c.png"));
+    }
+
+    #[test]
+    fn a_book_past_the_last_cover_has_none() {
+        let dir = series(&["Vol 1.cbz", "Vol 2.cbz"], &["a.jpg"]);
+        assert_eq!(cover_for(&dir, "Vol 2.cbz"), None);
+    }
+
+    #[test]
+    fn earlier_output_beside_the_books_does_not_shift_the_covers() {
+        let dir = series(
+            &[
+                "Vol 1.cbz",
+                "Vol 1 (mangapress).cbz",
+                "Vol 1_kcc0.cbz",
+                "Vol 1.epub",
+                "Vol 2.cbz",
+            ],
+            &["a.jpg", "b.jpg"],
+        );
+        assert_eq!(cover_for(&dir, "Vol 2.cbz").as_deref(), Some("b.jpg"));
+    }
+
+    #[test]
+    fn folders_are_counted_among_folders_and_covers_is_not_one_of_them() {
+        // "Covers" sorts before both; upstream would count it as a book.
+        let dir = series(&["Vol 1/", "Vol 2/", "Vol 3.cbz"], &["a.jpg", "b.jpg"]);
+        assert_eq!(cover_for(&dir, "Vol 1").as_deref(), Some("a.jpg"));
+        assert_eq!(cover_for(&dir, "Vol 2").as_deref(), Some("b.jpg"));
+    }
+
+    #[test]
+    fn a_cover_named_like_the_book_is_its_cover_wherever_it_sorts() {
+        let dir = series(
+            &["Vol 1.cbz", "Vol 2.cbz", "Vol 3.cbz"],
+            &["VOL 3.jpg", "Vol 2.png"],
+        );
+        assert_eq!(cover_for(&dir, "Vol 3.cbz").as_deref(), Some("VOL 3.jpg"));
+        assert_eq!(cover_for(&dir, "Vol 2.cbz").as_deref(), Some("Vol 2.png"));
+        // Covers here are named after books, so the one without its own
+        // gets none — not "Vol 2.png", which position would hand it.
+        assert_eq!(cover_for(&dir, "Vol 1.cbz"), None);
+
+        // A folder's whole name is its title, dots included.
+        let dir = series(&["Vol. 1/", "Vol. 2/"], &["Vol. 2.jpg"]);
+        assert_eq!(cover_for(&dir, "Vol. 2").as_deref(), Some("Vol. 2.jpg"));
+        assert_eq!(cover_for(&dir, "Vol. 1"), None);
     }
 
     #[test]
@@ -1099,6 +1824,17 @@ mod tests {
             stretch: false,
             wallpaper: false,
             white_borders: false,
+            black_borders: false,
+            no_rotate: false,
+            rotate_first: false,
+            maximize_strips: false,
+            color_autocontrast: false,
+            webtoon: false,
+            force_color: false,
+            force_png_rgb: false,
+            png_legacy: false,
+            no_quantize: false,
+            no_processing: false,
             rotate_right: false,
             force_png: false,
             output_format: OutputFormat::Epub,
@@ -1126,11 +1862,12 @@ mod tests {
             .map(|&g| Page {
                 extension: "png".to_string(),
                 bytes: solid_gray_png(40, g),
+                ..Default::default()
             })
             .collect();
 
         let options = minimal_pipeline_options();
-        let processed = process_chapter_pages(&pages, &options, |_, _| Ok(())).unwrap();
+        let processed = process_chapter_pages(&pages, &options, false, |_, _| Ok(())).unwrap();
         assert_eq!(processed.len(), gray_levels.len());
 
         let output_grays: Vec<u8> = processed
@@ -1155,12 +1892,13 @@ mod tests {
             .map(|_| Page {
                 extension: "png".to_string(),
                 bytes: solid_gray_png(20, 128),
+                ..Default::default()
             })
             .collect();
         let options = minimal_pipeline_options();
 
         let calls = std::sync::Mutex::new(Vec::new());
-        process_chapter_pages(&pages, &options, |done, page| {
+        process_chapter_pages(&pages, &options, false, |done, page| {
             calls.lock().unwrap().push((done, page));
             Ok(())
         })

@@ -67,6 +67,17 @@ doesn't, contrast stretched on one side only — is several levels, or a differe
 - Output containers: both sides are compared as decoded pixels, not as JPEG, GIF or PNG bytes.
 - Any device but the Kindle 11 profile (1072x1448), except the dither, which uses three.
 
+## Where mangapress differs on purpose
+
+Two things KCC does for the sake of Amazon's own converter and reader, which mangapress — made
+for books read in KOReader — leaves out. Neither can show up as a difference here.
+
+- A quantized page (`--forcepng`) is a GIF in KCC for a Kindle profile's EPUB. mangapress writes
+  a palette PNG on every device: the same pixels, in a smaller file.
+- A whole spread kept upright (`--norotate`) is capped at 1920x1920 in KCC for a Kindle profile's
+  EPUB. mangapress uses the rule KCC has for every other device — two screen widths by one screen
+  height — so that scenario runs on a Kobo profile of the same resolution.
+
 ## Files
 
 - `parity.py` — the scenarios, the comparison, the verdict.

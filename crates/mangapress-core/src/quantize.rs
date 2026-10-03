@@ -20,33 +20,29 @@
 //! real Pillow on synthetic pages and on a full 965x1448 page for all three
 //! palettes: not one pixel differs.
 //!
-//! Storage follows upstream too (see [`Container`]): a GIF for a Kindle
-//! profile's EPUB, a palette PNG at the palette's own bit depth otherwise,
-//! and an 8-bit grayscale PNG only where upstream converts the quantized
-//! page back to grayscale.
+//! Storage is where this deliberately stops following upstream. KCC stores
+//! a quantized page as a GIF when the device is a Kindle and the book an
+//! EPUB — the case where it expects the book to go on to Amazon's converter
+//! — and as a palette PNG otherwise. mangapress writes the palette PNG for
+//! every device: it holds the same pixels, KOReader reads it on a Kindle
+//! like on anything else, and on a real 50-page chapter it came out 7%
+//! smaller than the GIF. See [`Container`].
 
 use crate::error::{Error, Result};
 use crate::profile::Palette;
 use image::{GrayImage, Luma};
 
-/// How a quantized page is stored. Upstream's rule, by output format and
-/// device: its `kindle_azw3` flag (a Kindle profile writing MOBI *or* EPUB)
-/// selects GIF; PDF output, and CBZ output for the four oldest Kindles,
-/// convert the quantized page back to grayscale first; everything else
-/// keeps the palette image and saves it as PNG, which Pillow writes at the
-/// smallest bit depth the palette fits in.
+/// How a quantized page is stored: as a palette PNG at the smallest bit
+/// depth the palette fits in (which is what Pillow writes for upstream), or
+/// as plain 8-bit grayscale where upstream converts the quantized page back
+/// to grayscale first — PDF output, CBZ output for the four oldest Kindles,
+/// `--pnglegacy` — or never quantizes it (`--noquantize`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Container {
-    /// GIF with the device palette as its color table.
-    Gif,
     /// Palette PNG: 2 bits per pixel for a 4-level palette, 4 for 15 or 16.
     IndexedPng,
     /// 8-bit grayscale PNG.
     GrayPng,
-    /// GIF with a 256-level grayscale color table — what a Kindle profile's
-    /// EPUB gets when upstream has turned the page back into grayscale
-    /// (`--pnglegacy`) or never quantized it (`--noquantize`).
-    GrayGif,
 }
 
 /// Quantizes `page` to `palette` the way Pillow does, returning each pixel's
@@ -172,8 +168,7 @@ impl<'a> NearestLevel<'a> {
     }
 }
 
-/// The palette as the RGB triplets a GIF color table or PNG `PLTE` chunk
-/// holds.
+/// The palette as the RGB triplets a PNG `PLTE` chunk holds.
 fn palette_rgb(palette: Palette) -> Vec<u8> {
     palette
         .level_values()
@@ -213,41 +208,6 @@ pub fn encode_indexed_png(
         let mut writer = encoder.write_header()?;
         writer.write_image_data(&packed)?;
         writer.finish()
-    };
-    let mut bytes = Vec::new();
-    encode(&mut bytes).map_err(|error| Error::Encode(error.to_string()))?;
-    Ok(bytes)
-}
-
-/// A single-frame GIF whose color table is the device palette.
-pub fn encode_gif(dimensions: (u32, u32), indices: &[u8], palette: Palette) -> Result<Vec<u8>> {
-    encode_gif_with_colors(dimensions, indices, &palette_rgb(palette))
-}
-
-/// A single-frame GIF of a grayscale page: the color table is every gray
-/// level, and each pixel indexes its own value.
-pub fn encode_gray_gif(page: &GrayImage) -> Result<Vec<u8>> {
-    let colors: Vec<u8> = (0..=255u8)
-        .flat_map(|level| [level, level, level])
-        .collect();
-    encode_gif_with_colors(page.dimensions(), page.as_raw(), &colors)
-}
-
-fn encode_gif_with_colors(
-    (width, height): (u32, u32),
-    indices: &[u8],
-    colors: &[u8],
-) -> Result<Vec<u8>> {
-    let (Ok(width), Ok(height)) = (u16::try_from(width), u16::try_from(height)) else {
-        return Err(Error::Encode(format!(
-            "a {width}x{height} page is larger than a GIF can hold"
-        )));
-    };
-    let encode = |bytes: &mut Vec<u8>| -> std::result::Result<(), gif::EncodingError> {
-        let mut encoder = gif::Encoder::new(bytes, width, height, colors)?;
-        encoder.write_frame(&gif::Frame::from_indexed_pixels(
-            width, height, indices, None,
-        ))
     };
     let mut bytes = Vec::new();
     encode(&mut bytes).map_err(|error| Error::Encode(error.to_string()))?;
@@ -414,24 +374,5 @@ mod tests {
             let decoded = image::load_from_memory(&bytes).unwrap().to_luma8();
             assert_eq!(decoded, quantize_with_floyd_steinberg(&page, palette));
         }
-    }
-
-    #[test]
-    fn gif_decodes_back_to_the_palette_values() {
-        let page = synthetic_page(37, 11);
-        let indices = quantize_to_palette_indices(&page, Palette::Gray16);
-        let bytes = encode_gif((37, 11), &indices, Palette::Gray16).unwrap();
-        assert_eq!(&bytes[..6], b"GIF89a");
-        let decoded = image::load_from_memory(&bytes).unwrap().to_luma8();
-        assert_eq!(
-            decoded,
-            quantize_with_floyd_steinberg(&page, Palette::Gray16)
-        );
-    }
-
-    #[test]
-    fn a_page_too_large_for_a_gif_is_an_error_not_a_truncated_file() {
-        let result = encode_gif((70_000, 1), &[], Palette::Gray16);
-        assert!(matches!(result, Err(Error::Encode(_))));
     }
 }

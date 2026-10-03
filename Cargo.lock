@@ -1201,7 +1201,6 @@ dependencies = [
 name = "mangapress-core"
 version = "0.6.0"
 dependencies = [
- "gif",
  "image",
  "imageproc",
  "png",

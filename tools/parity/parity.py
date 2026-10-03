@@ -57,7 +57,9 @@ SCENARIOS = [
     ("spreads: rotate", "spreads", ["-r", "1"], ["--splitter=rotate"]),
     ("spreads: split and rotate", "spreads", *SPLIT_BOTH),
     ("spreads: rotated copy first", "spreads", ["-r", "2", "--rotatefirst"], ["--splitter=both", "--rotatefirst"]),
-    ("spreads: not rotated", "spreads", ["-r", "2", "--norotate"], ["--splitter=both", "--norotate"]),
+    # On a Kobo profile of the same resolution: for a Kindle's EPUB, KCC caps
+    # an upright spread at 1920px, which mangapress deliberately does not.
+    ("spreads: not rotated", "spreads", ["-r", "2", "--norotate"], ["--splitter=both", "--norotate"], ["-p", "KoC", "-m", "-u", "-f", "EPUB"]),
     ("spreads: rotated clockwise", "spreads", ["-r", "2", "--rotateright"], ["--splitter=both", "--rotateright"]),
     ("strips restacked 2x2", "spreads", ["-r", "2", "--maximizestrips"], ["--splitter=both", "--maximizestrips"]),
     ("crop: margins only", "pages", ["-r", "2", "-c", "1"], ["--splitter=both", "--crop=margins"]),
@@ -190,7 +192,7 @@ def main():
         dump_base = bases[1] if len(bases) > 1 else DUMP_BASE
         out = run(oracle + [kcc_dir, list_file] + kcc_base + kcc_extra)
         version = out.split(":")[0].replace("KCC ", "").strip()
-        run([dump, dump_dir, list_file, PROFILE] + dump_base + dump_extra)
+        run([dump, dump_dir, list_file, kcc_base[kcc_base.index("-p") + 1]] + dump_base + dump_extra)
         before = len(report.failures)
         worst = compare_pages(report, name, files, kcc_dir, dump_dir)
         status = "ok  " if len(report.failures) == before else "FAIL"

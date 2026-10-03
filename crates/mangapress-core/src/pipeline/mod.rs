@@ -53,7 +53,7 @@ pub struct PipelineOptions {
     /// `--norotate`: keep the whole-spread copy upright instead of turning
     /// it. An upright spread is not fitted to the device like a page: it is
     /// only shrunk, and only when it exceeds two device widths by one device
-    /// height (see [`finish_page`]).
+    /// height (see [`resize_upright_spread`]).
     pub no_rotate: bool,
     /// `--rotatefirst`: in `Both` mode, put the whole-spread copy before the
     /// two halves instead of after them.
@@ -88,9 +88,8 @@ pub struct PipelineOptions {
     pub output_format: OutputFormat,
     /// `--forcepng`: quantize to the profile's grayscale palette (Floyd-
     /// Steinberg dithered, as Pillow dithers) instead of full-tone JPEG, and
-    /// store the result as upstream does for this device and output format:
-    /// GIF, palette PNG, or 8-bit grayscale PNG — see
-    /// [`crate::quantize::Container`].
+    /// store the result as a palette PNG — or as 8-bit grayscale where
+    /// upstream does; see [`crate::quantize::Container`].
     pub force_png: bool,
     pub gamma: Option<f32>,
     /// `--autolevel`: run [`crate::contrast::autolevel`] before autocontrast.
@@ -366,30 +365,20 @@ fn finish_page(
     let extension = if options.force_png {
         let palette = options.profile.palette;
         match quantized_container(options) {
-            Container::Gif => {
-                let indices = crate::quantize::quantize_to_palette_indices(&page, palette);
-                bytes = crate::quantize::encode_gif(page.dimensions(), &indices, palette)?;
-                "gif"
-            }
             Container::IndexedPng => {
                 let indices = crate::quantize::quantize_to_palette_indices(&page, palette);
                 bytes = crate::quantize::encode_indexed_png(page.dimensions(), &indices, palette)?;
                 "png"
             }
-            Container::GrayPng | Container::GrayGif => {
+            Container::GrayPng => {
                 let gray = if options.no_quantize {
                     page.clone()
                 } else {
                     crate::quantize::quantize_with_floyd_steinberg(&page, palette)
                 };
-                if quantized_container(options) == Container::GrayGif {
-                    bytes = crate::quantize::encode_gray_gif(&gray)?;
-                    "gif"
-                } else {
-                    image::DynamicImage::ImageLuma8(gray)
-                        .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Png)?;
-                    "png"
-                }
+                image::DynamicImage::ImageLuma8(gray)
+                    .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Png)?;
+                "png"
             }
         }
     } else {
@@ -416,31 +405,26 @@ fn finish_page(
     })
 }
 
-/// Where upstream stores a `--forcepng` page, given the device and the
-/// output format — see [`Container`]. A Kindle profile stays a Kindle
-/// profile for this purpose even with a custom resolution, as it does
-/// upstream; the oldest-Kindle exception does not survive one (upstream
-/// renames the profile "Custom" before it checks).
+/// How a `--forcepng` page is stored — see [`Container`]. Upstream's rule
+/// minus its GIF branch: plain grayscale where upstream turns the page back
+/// into grayscale (or never makes it a palette image), a palette PNG
+/// otherwise. The oldest-Kindle exception does not survive a custom
+/// resolution, as upstream's doesn't (it renames the profile "Custom" before
+/// it checks).
 fn quantized_container(options: &PipelineOptions) -> Container {
-    let kindle = options.profile.family() == crate::profile::Family::Kindle;
     let custom_resolution =
         options.width_override.unwrap_or(0) != 0 || options.height_override.unwrap_or(0) != 0;
     let oldest_kindle =
         !custom_resolution && matches!(options.profile.code, "K1" | "K2" | "K34" | "KDX");
 
-    // Upstream turns the page back into plain grayscale in these cases, and
-    // never makes it a palette image at all without quantization.
-    let as_grayscale = options.no_quantize
+    if options.no_quantize
         || options.png_legacy
         || options.output_format == OutputFormat::Pdf
-        || (options.output_format == OutputFormat::Cbz && oldest_kindle);
-    let gif = kindle && options.output_format == OutputFormat::Epub;
-
-    match (gif, as_grayscale) {
-        (true, false) => Container::Gif,
-        (true, true) => Container::GrayGif,
-        (false, false) => Container::IndexedPng,
-        (false, true) => Container::GrayPng,
+        || (options.output_format == OutputFormat::Cbz && oldest_kindle)
+    {
+        Container::GrayPng
+    } else {
+        Container::IndexedPng
     }
 }
 
@@ -482,7 +466,7 @@ fn resize_for_device<P: image::Pixel<Subpixel = u8> + 'static>(
     background: Background,
 ) -> image::ImageBuffer<P, Vec<u8>> {
     if role == spread::PageRole::Rotated && options.no_rotate && !options.wallpaper {
-        return resize_upright_spread(page, target, options);
+        return resize_upright_spread(page, target);
     }
     resize::resize_page(
         &page,
@@ -512,10 +496,10 @@ fn resize_for_device<P: image::Pixel<Subpixel = u8> + 'static>(
 /// all three channels at once so the colors keep their balance; resized as
 /// a gray page is; saved as RGB JPEG, or as PNG with `--force-png-rgb`.
 ///
-/// One thing here does not follow upstream to the pixel: for a Kindle
-/// profile's EPUB, `--force-png-rgb` makes upstream save a GIF, which means
-/// reducing the page to 256 colors with Pillow's palette search. The GIF
-/// written here chooses its 256 colors differently.
+/// With `--force-png-rgb` the page is saved as RGB PNG on every device;
+/// upstream writes a 256-color GIF for a Kindle profile's EPUB, which this
+/// crate does not do for grayscale pages either (see
+/// [`crate::quantize`]).
 fn finish_color_page(
     page: image::RgbImage,
     role: spread::PageRole,
@@ -537,20 +521,9 @@ fn finish_color_page(
 
     let mut bytes = Vec::new();
     let extension = if options.force_png && options.force_png_rgb {
-        let kindle_epub = options.profile.family() == crate::profile::Family::Kindle
-            && options.output_format == OutputFormat::Epub;
-        let format = if kindle_epub {
-            ImageFormat::Gif
-        } else {
-            ImageFormat::Png
-        };
         image::DynamicImage::ImageRgb8(page)
-            .write_to(&mut std::io::Cursor::new(&mut bytes), format)?;
-        if kindle_epub {
-            "gif"
-        } else {
-            "png"
-        }
+            .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Png)?;
+        "png"
     } else {
         let quality = options
             .jpeg_quality
@@ -571,40 +544,28 @@ fn finish_color_page(
     })
 }
 
-/// How upstream sizes a whole spread it was told not to rotate: left alone
-/// unless it is too large, and then only shrunk to fit — within 1920x1920
-/// for a Kindle profile's EPUB (the limit of Kindle's own converter), else
-/// within two device widths by one device height. Never fitted to the
-/// device like a page, never enlarged. Kindle Scribe profiles don't take
-/// this path upstream and go through the ordinary resize.
+/// How a whole spread that was not to be rotated is sized: left alone
+/// unless it is larger than two device widths by one device height, and
+/// then only shrunk to fit that. Never fitted to the device like a page,
+/// never enlarged.
+///
+/// This is upstream's rule for every device but a Kindle. For a Kindle
+/// profile's EPUB upstream caps the spread at 1920x1920 instead — the limit
+/// it observes for Amazon's converter, a tenth narrower than the two
+/// screens of a Kindle 11 — and sends a Kindle Scribe's through the
+/// ordinary page resize. Neither serves a book read in KOReader, so
+/// mangapress applies the one rule to every device.
 fn resize_upright_spread<P: image::Pixel<Subpixel = u8> + 'static>(
     page: image::ImageBuffer<P, Vec<u8>>,
     target: (u32, u32),
-    options: &PipelineOptions,
 ) -> image::ImageBuffer<P, Vec<u8>> {
-    use image::imageops::FilterType::Lanczos3;
-    let kindle_epub = options.profile.family() == crate::profile::Family::Kindle
-        && options.output_format == OutputFormat::Epub;
-    if kindle_epub && options.profile.code.starts_with("KS") {
-        return resize::resize_page(
-            &page,
-            &ResizeOptions {
-                target,
-                upscale: options.upscale,
-                stretch: options.stretch,
-                wallpaper: false,
-                is_kdx_profile: false,
-                pads_for_cbz_or_pdf: false,
-                white_borders: options.white_borders,
-                fill: 255,
-            },
-        );
-    }
     let (w, h) = page.dimensions();
-    if kindle_epub && (w > 1920 || h > 1920) {
-        resize::contain(&page, (1920, 1920), Lanczos3)
-    } else if w > target.0 * 2 || h > target.1 {
-        resize::contain(&page, (target.0 * 2, target.1), Lanczos3)
+    if w > target.0 * 2 || h > target.1 {
+        resize::contain(
+            &page,
+            (target.0 * 2, target.1),
+            image::imageops::FilterType::Lanczos3,
+        )
     } else {
         page
     }
@@ -828,7 +789,7 @@ mod tests {
     }
 
     #[test]
-    fn a_quantized_page_is_stored_as_upstream_stores_it() {
+    fn a_quantized_page_is_a_palette_png_unless_upstream_makes_it_grayscale() {
         let container = |profile: &str, format: OutputFormat, custom_width: Option<u32>| {
             let mut options = options();
             options.profile = crate::profile::Profile::by_code(profile).unwrap();
@@ -836,23 +797,15 @@ mod tests {
             options.width_override = custom_width;
             quantized_container(&options)
         };
-        // A Kindle profile's EPUB is GIF, even on the oldest Kindles and
-        // even at a custom resolution.
-        assert_eq!(container("K11", OutputFormat::Epub, None), Container::Gif);
-        assert_eq!(container("K2", OutputFormat::Epub, None), Container::Gif);
-        assert_eq!(
-            container("K11", OutputFormat::Epub, Some(1000)),
-            Container::Gif
-        );
-        // Any other profile's EPUB, and CBZ in general, is a palette PNG.
-        assert_eq!(
-            container("KoC", OutputFormat::Epub, None),
-            Container::IndexedPng
-        );
-        assert_eq!(
-            container("OTHER", OutputFormat::Epub, Some(1000)),
-            Container::IndexedPng
-        );
+        // EPUB and CBZ are palette PNG on every device — a Kindle included,
+        // where upstream would write a GIF.
+        for profile in ["K11", "K2", "KoC", "Rmk2"] {
+            assert_eq!(
+                container(profile, OutputFormat::Epub, None),
+                Container::IndexedPng,
+                "{profile}"
+            );
+        }
         assert_eq!(
             container("K11", OutputFormat::Cbz, None),
             Container::IndexedPng
@@ -877,25 +830,22 @@ mod tests {
     }
 
     #[test]
-    fn force_png_writes_the_container_and_extension_together() {
+    fn force_png_writes_png_with_the_same_pixels_in_either_container() {
         let page = png(page_with_margins((300, 450), 20, false));
         let mut options = options();
         options.force_png = true;
 
-        let gif = process_page(&page, &options, false).unwrap();
-        assert_eq!(gif[0].extension, "gif");
-        assert_eq!(&gif[0].bytes[..6], b"GIF89a");
-
-        options.output_format = OutputFormat::Cbz;
+        // A Kindle profile's EPUB: palette PNG, 4 bits per pixel.
         let indexed = process_page(&page, &options, false).unwrap();
         assert_eq!(indexed[0].extension, "png");
         assert_eq!(&indexed[0].bytes[1..4], b"PNG");
+        assert_eq!(indexed[0].bytes[24], 4, "bit depth");
+        assert_eq!(indexed[0].bytes[25], 3, "color type: palette");
 
-        // Whatever the container, the pixels are the same quantized page.
-        assert_eq!(decode(&gif[0]), decode(&indexed[0]));
         options.output_format = OutputFormat::Pdf;
         let gray = process_page(&page, &options, false).unwrap();
-        assert_eq!(decode(&gray[0]), decode(&gif[0]));
+        assert_eq!(gray[0].bytes[24], 8, "bit depth");
+        assert_eq!(decode(&gray[0]), decode(&indexed[0]));
         let levels = options.profile.palette.level_values();
         assert!(decode(&gray[0]).pixels().all(|p| levels.contains(&p[0])));
     }
@@ -948,10 +898,15 @@ mod tests {
         assert_eq!(page[0].role, spread::PageRole::Rotated);
         assert_eq!(decode(&page[0]).dimensions(), (2000, 1400));
 
-        // On a Kindle profile's EPUB it is over the 1920px limit instead.
+        // The same on a Kindle profile, where upstream would cap it at 1920px.
         options.profile = crate::profile::Profile::by_code("K11").unwrap();
         let page = process_page(&png(two_tone_spread()), &options, false).unwrap();
-        assert_eq!(decode(&page[0]).dimensions(), (1920, 1344));
+        assert_eq!(decode(&page[0]).dimensions(), (2000, 1400));
+
+        // Larger than two screens wide, it is shrunk to exactly that.
+        let huge = image::RgbImage::from_pixel(4288, 1448, image::Rgb([128, 128, 128]));
+        let page = process_page(&png(huge), &options, false).unwrap();
+        assert_eq!(decode(&page[0]).dimensions(), (2144, 724));
 
         // Rotated as usual without the flag.
         options.no_rotate = false;
@@ -1019,11 +974,11 @@ mod tests {
         };
         assert_eq!(
             container(OutputFormat::Epub, true, false),
-            Container::GrayGif
+            Container::GrayPng
         );
         assert_eq!(
             container(OutputFormat::Epub, false, true),
-            Container::GrayGif
+            Container::GrayPng
         );
         assert_eq!(
             container(OutputFormat::Cbz, true, false),
@@ -1039,7 +994,8 @@ mod tests {
         options.force_png = true;
         options.png_legacy = true;
         let legacy = process_page(&page, &options, false).unwrap();
-        assert_eq!(legacy[0].extension, "gif");
+        assert_eq!(legacy[0].extension, "png");
+        assert_eq!(legacy[0].bytes[24], 8, "bit depth");
         let levels = options.profile.palette.level_values();
         assert!(decode(&legacy[0]).pixels().all(|p| levels.contains(&p[0])));
 

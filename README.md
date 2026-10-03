@@ -80,7 +80,8 @@ irm https://raw.githubusercontent.com/gustavommcv/mangapress/main/install.ps1 | 
 Both scripts download the right binary for your OS/architecture from the
 [latest release](https://github.com/gustavommcv/mangapress/releases/latest) and put it on your
 PATH — no need to install Rust. Prebuilt binaries and checksums for every release are also
-available there directly, if you'd rather install manually.
+available there directly, if you'd rather install manually. Each archive holds the binary, the
+two license texts and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 Already have Rust and want the dev version instead:
 
@@ -98,9 +99,10 @@ existing binary in place. `mangapress --version` tells you what you currently ha
 mangapress is a single self-contained binary; there's no installer state to clean up beyond it.
 
 - **macOS/Linux:** `rm ~/.local/bin/mangapress`
-- **Windows:** delete `%LOCALAPPDATA%\Programs\mangapress\mangapress.exe`. The installer added
-  that folder to your user `PATH`; if you'd rather remove that entry too, it's under Settings >
-  System > About > Advanced system settings > Environment Variables > `Path` (User variables).
+- **Windows:** delete the folder `%LOCALAPPDATA%\Programs\mangapress` (the executable and the
+  license files beside it). The installer added that folder to your user `PATH`; if you'd rather
+  remove that entry too, it's under Settings > System > About > Advanced system settings >
+  Environment Variables > `Path` (User variables).
 - **`cargo install`:** `cargo uninstall mangapress-cli`.
 
 ## Usage

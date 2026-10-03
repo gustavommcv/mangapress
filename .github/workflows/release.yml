@@ -44,18 +44,23 @@ jobs:
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }} -p mangapress-cli
 
+      # The licenses and third-party notices travel with the binary: the
+      # notices' own terms ask for that. Installers and Mangabound take the
+      # executable by name, so the extra files are inert to them.
       - name: Package (unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          cd target/${{ matrix.target }}/release
-          tar -czf "$GITHUB_WORKSPACE/mangapress-${{ matrix.target }}.tar.gz" mangapress
+          tar -czf "mangapress-${{ matrix.target }}.tar.gz" \
+            -C "$GITHUB_WORKSPACE/target/${{ matrix.target }}/release" mangapress \
+            -C "$GITHUB_WORKSPACE" LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.md
 
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path target/${{ matrix.target }}/release/mangapress.exe `
+          Compress-Archive -Path target/${{ matrix.target }}/release/mangapress.exe, `
+              LICENSE-MIT, LICENSE-APACHE, THIRD-PARTY-NOTICES.md `
             -DestinationPath mangapress-${{ matrix.target }}.zip
 
       - uses: actions/upload-artifact@v4

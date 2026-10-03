@@ -2,7 +2,7 @@
 //! panels), enabled via `--eraserainbow`. Runs *after* resize in the
 //! pipeline (matches upstream's `optimizeForDisplay()` call site).
 //!
-//! Port target: `erase_rainbow_artifacts()` / `attenuate_diagonal_frequencies()`
+//! Upstream reference: `erase_rainbow_artifacts()` / `attenuate_diagonal_frequencies()`
 //! in KCC's `rainbow_artifacts_eraser.py` (no license header upstream —
 //! treated with the same caution as GPLv3 files per
 //! `docs/adr/0007-gplv3-boundary-kcc-image-rs.md`). Only the grayscale path
@@ -34,10 +34,11 @@
 //! real (up to float noise, discarded by taking the real part). This
 //! avoids pulling in a separate real-FFT crate for one algorithm.
 //!
-//! Confirmed empirically, not just reasoned from the math above: a direct
-//! transcription of the real upstream source (`fourier_transform_image`,
-//! `attenuate_diagonal_frequencies`, `inverse_fourier_transform_image`) run
-//! through real `numpy`/`scipy` on identical inputs matches this module's
+//! Confirmed empirically, not just reasoned from the math above: upstream's
+//! own functions (`fourier_transform_image`,
+//! `attenuate_diagonal_frequencies`, `inverse_fourier_transform_image`),
+//! run locally through real `numpy`/`scipy` on identical inputs — an
+//! experiment, not something in this repository — match this module's
 //! output exactly (even dimensions) or within float-rounding noise (max 1
 //! gray level), across a diagonal test pattern, large gradients, and a real
 //! manga page. For *odd* width or height the two diverge slightly more

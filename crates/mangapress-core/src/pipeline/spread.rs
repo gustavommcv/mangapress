@@ -1,6 +1,6 @@
 //! Double-page spread detection: split vs. rotate vs. leave alone.
 //!
-//! Port target: `ComicPageParser.splitCheck()` in KCC's `image.py` (GPLv3
+//! Upstream reference: `ComicPageParser.splitCheck()` in KCC's `image.py` (GPLv3
 //! upstream — spec only, see `docs/adr/0007-gplv3-boundary-kcc-image-rs.md`).
 //!
 //! Decision tree, given the page's `(width, height)` *after* margin cropping
@@ -17,17 +17,17 @@
 //!    - orientation mismatches the device (`(width > height) != (dst_width >
 //!      dst_height)`), and
 //!    - `width / height > SPREAD_ASPECT_THRESHOLD` (1.16).
-//! 2. If it is a spread: `width / height >= BISECT_THRESHOLD` (1.8) means
-//!    "too wide to usefully split" -> rotate instead, even in default Split
-//!    mode. Below 1.8, respect the user's `-r/--splitter` choice (Split /
-//!    Rotate / Both).
+//! 2. If it is a spread: `width / height >= ROTATE_ONLY_ASPECT_THRESHOLD`
+//!    (1.8) means "too wide to usefully split" -> rotate instead, even in
+//!    default Split mode. Below 1.8, respect the user's `-r/--splitter`
+//!    choice (Split / Rotate / Both).
 //! 3. Which half becomes "page one" when splitting depends on reading
 //!    direction — see [`crate::manga`].
 //!
 //! Webtoon mode bypasses this entirely (pages pass through as `Normal`).
 
 pub const SPREAD_ASPECT_THRESHOLD: f64 = 1.16;
-pub const BISECT_THRESHOLD: f64 = 1.8;
+pub const ROTATE_ONLY_ASPECT_THRESHOLD: f64 = 1.8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
@@ -62,7 +62,7 @@ pub fn decide(
         return Decision::Normal;
     }
 
-    let too_wide_to_split = w / h >= BISECT_THRESHOLD;
+    let too_wide_to_split = w / h >= ROTATE_ONLY_ASPECT_THRESHOLD;
     match (too_wide_to_split, splitter) {
         (true, _) => Decision::Rotate,
         (false, Split) => Decision::Split,

@@ -5,9 +5,10 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 mangapress resizes and optimizes a manga/comic `.cbz` for e-ink reading, generating a fixed-layout
-EPUB (or CBZ/PDF) tuned to a target device's screen resolution and grayscale palette — a CLI-first
-Rust rewrite of [KCC (Kindle Comic Converter)](https://github.com/ciromattia/kcc)'s conversion
-pipeline, distributed as a single static binary.
+EPUB (or CBZ/PDF) tuned to a target device's screen resolution and grayscale palette. It is an
+independent, CLI-first reimplementation in Rust of what
+[KCC (Kindle Comic Converter)](https://github.com/ciromattia/kcc)'s conversion pipeline does,
+distributed as a single static binary.
 
 ```
 Raw chapters (folder or .cbz per chapter)
@@ -61,31 +62,6 @@ and are covered by an extensive test suite, checked page by page against upstrea
 running KCC's own code next to it ([tools/parity](tools/parity/README.md)) — see
 [docs/adr](docs/adr/README.md) for the design decisions made so far, and open an issue if you hit
 a rough edge. Still pre-1.0.
-
-## Performance
-
-Page processing is parallelized across every CPU core (via [`rayon`](https://github.com/rayon-rs/rayon)),
-matching how upstream KCC fans work out across a `multiprocessing.Pool()` — mangapress just does it
-compiled instead of interpreted. Measured converting a real 182-page, 7-chapter volume
-(`--profile KV`, EPUB output) on a 6-core/12-thread AMD Ryzen 5 5600X, averaged over 3 runs each:
-
-| | mangapress v0.4.0 | KCC 11.2.0 |
-|---|---|---|
-| Wall time | **~2.8s** | ~5.0s |
-| Output | 186 pages, EPUB with a declared cover | 186 pages + a separate `cover.jpg`, same page content |
-
-Both tools crop/split/resize every page identically for this volume — verified by instrumenting a
-real KCC checkout to dump its own actual per-page decisions and diffing them against mangapress's,
-not just by comparing final file sizes. The extra file in KCC's output is its separate cover image;
-mangapress at that version declared the first page as the cover instead. It has since made a
-separate cover the way KCC does, so that a first page that gets cropped, split or rotated doesn't
-take the cover with it.
-
-That comparison has not been repeated with KCC 12. What has been measured since is mangapress
-against itself, after the work that made its pages match KCC 12.0.0's exactly: on a 432-page
-volume, on a four-core laptop (Ryzen 5 3500U, Kindle 11 profile, EPUB), a conversion went from
-8.7 s in v0.6.0 to 10.1 s when no page needs resizing, and from 15.7 s to 12.2 s with `--upscale`,
-where every page is enlarged.
 
 ## Install
 
@@ -205,11 +181,13 @@ rather than infer compatibility from the release version.
 
 ## Relationship to upstream KCC
 
-KCC is used as a reference/specification, not a source to copy from wholesale — see
+mangapress is a separate project, not affiliated with or endorsed by KCC or its authors. It takes
+KCC's *behavior* as its specification and reimplements it; it does not include KCC's code. See
 [docs/adr/0007-gplv3-boundary-kcc-image-rs.md](docs/adr/0007-gplv3-boundary-kcc-image-rs.md) for
-why `image.py` and `dualmetafix.py` specifically (GPLv3-licensed, unlike the rest of the
-ISC-licensed repo) are treated as algorithm documentation to reimplement independently, not code
-to port.
+how that line is kept, and why it matters most for `image.py` and `dualmetafix.py`, which are
+GPLv3-licensed, unlike the rest of the ISC-licensed repository. What mangapress does share with
+KCC's own text — EPUB markup, option names — and KCC's license notice are in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 Given the same pages and options, mangapress is meant to produce the pages KCC 12.0.0 does, and
 [tools/parity](tools/parity/README.md) checks that it does. Where it differs, it is on purpose —
@@ -235,3 +213,7 @@ mostly because mangapress is made for books read in KOReader rather than by Amaz
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) acknowledges the two projects whose work
+mangapress reproduces — KCC, and Pillow, which KCC's image processing is built on — and carries
+their license notices.

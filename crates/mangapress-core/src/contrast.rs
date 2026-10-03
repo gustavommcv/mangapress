@@ -1,6 +1,6 @@
 //! Gamma correction and autocontrast/autolevel.
 //!
-//! Port targets in KCC's `image.py` (GPLv3 upstream — reimplemented from
+//! Upstream references in KCC's `image.py` (GPLv3 upstream — reimplemented from
 //! documented/read behavior, not copied; see
 //! `docs/adr/0007-gplv3-boundary-kcc-image-rs.md`):
 //! - `gammaCorrectImage()`: `pixel = 255 * (pixel/255)^gamma`. Comes from

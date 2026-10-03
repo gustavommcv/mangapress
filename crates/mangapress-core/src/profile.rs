@@ -1,9 +1,13 @@
 //! Device profiles: target resolution, grayscale palette depth, and gamma
 //! per e-reader model.
 //!
-//! Transcribed from `kindlecomicconverter/image.py`'s `ProfileData` class
-//! (KCC upstream, commit `ea532c709b72a994fd9219c3bb7cd3f1df08027b`), which
-//! is the closest thing to a spec for "what resolution does device X want."
+//! The same devices as the `ProfileData` table in KCC's
+//! `kindlecomicconverter/image.py` (first read at commit
+//! `ea532c709b72a994fd9219c3bb7cd3f1df08027b`), which is the closest thing
+//! to a spec for "what resolution does device X want." What is taken from
+//! it is facts about hardware — each device's name, screen resolution and
+//! gray levels — not code (see
+//! `docs/adr/0007-gplv3-boundary-kcc-image-rs.md`).
 //! Compared again with KCC 12.0.0's table: the same 41 profiles, with the
 //! same names, resolutions and palettes.
 //! Every profile in upstream ships gamma `1.0`, so gamma correction is only
@@ -26,11 +30,11 @@ impl Palette {
         self.level_values().len() as u8
     }
 
-    /// The exact gray values in this palette, transcribed byte-for-byte
-    /// from `ProfileData.Palette4/15/16` in `image.py`. Not naive even
+    /// The exact gray values in this palette — the ones upstream quantizes
+    /// to (`ProfileData.Palette4/15/16` in `image.py`). Not naive even
     /// spacing: `Gray15` in particular is `Gray16` with `0xee` (238)
     /// removed — the gap between `0xdd` (221) and `0xff` (255) is real,
-    /// not a transcription error.
+    /// not a mistake here.
     pub fn level_values(self) -> &'static [u8] {
         match self {
             Palette::Gray4 => &[0x00, 0x55, 0xaa, 0xff],

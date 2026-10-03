@@ -1,6 +1,6 @@
 //! Inter-panel empty-space cropping (KCC's `--ipc/--interpanelcrop`).
 //!
-//! Port target: `crop_empty_inter_panel()`/`empty_sections()` in
+//! Upstream reference: `crop_empty_inter_panel()`/`empty_sections()` in
 //! `inter_panel_crop_alg.py` (no license header upstream — treated with the
 //! same caution as GPLv3 files per
 //! `docs/adr/0007-gplv3-boundary-kcc-image-rs.md`). Removes empty

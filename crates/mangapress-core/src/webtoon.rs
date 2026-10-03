@@ -1,7 +1,7 @@
 //! Webtoon mode: a chapter of long vertical strips, cut into screen-sized
 //! pages between panels instead of across them.
 //!
-//! Port target: `mergeDirectory()` and `splitImage()` in KCC's
+//! Upstream reference: `mergeDirectory()` and `splitImage()` in KCC's
 //! `comic2panel.py`, which upstream runs over the whole book (`-m -i`)
 //! before any page processing when `--webtoon` is on. Reimplemented from its
 //! behavior rather than translated (the same caution as

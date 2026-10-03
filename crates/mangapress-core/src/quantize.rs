@@ -2,7 +2,7 @@
 //! quantized page is stored in (`--forcepng` output path — the default JPEG
 //! path ships full 8-bit tone, undithered).
 //!
-//! Port target: `quantizeImage()` and the PNG/GIF branch of
+//! Upstream reference: `quantizeImage()` and the PNG/GIF branch of
 //! `save_with_codec()` in KCC's `image.py` (GPLv3 upstream — reimplemented
 //! from documented behavior, not copied; see
 //! `docs/adr/0007-gplv3-boundary-kcc-image-rs.md`), plus the three

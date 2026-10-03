@@ -333,8 +333,8 @@ pub fn ignore_pixels_near_edge(bw_img: &mut GrayImage) {
     }
 }
 
-/// Output of the shared prefix both [`margin::get_bbox_crop_margin`] and
-/// [`page_number::get_bbox_crop_margin_page_number`] start from: grayscale
+/// Output of the shared prefix both [`margin::content_bbox`] and
+/// [`page_number::content_bbox_ignoring_page_number`] start from: grayscale
 /// input, invert if the background is dark, autocontrast (cutoff 1%),
 /// box-blur (radius 1), threshold, clear edge noise, take a bbox.
 pub struct Binarized {

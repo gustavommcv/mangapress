@@ -1,7 +1,7 @@
 //! What a source page's colors mean to the pipeline: how an RGB page
 //! becomes gray, and whether upstream would call the page a color page.
 //!
-//! Port targets, both in KCC's `image.py` (GPLv3 upstream — reimplemented
+//! Upstream references, both in KCC's `image.py` (GPLv3 upstream — reimplemented
 //! from documented/observed behavior, not copied; see
 //! `docs/adr/0007-gplv3-boundary-kcc-image-rs.md`):
 //! - every `convert('L')` / `ImageOps.grayscale()` call (background

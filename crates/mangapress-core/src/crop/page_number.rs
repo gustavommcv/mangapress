@@ -1,6 +1,6 @@
 //! Page-number-aware margin cropping (KCC's `--cropping 2`, the default).
 //!
-//! Port target: `get_bbox_crop_margin_page_number()` in
+//! Upstream reference: `get_bbox_crop_margin_page_number()` in
 //! `page_number_crop_alg.py`, plus the `group_close_values`/`merge_boxes`/
 //! `box_intersect` helpers it depends on (`common_crop.py`/same file). No
 //! license header upstream on any of these — treated with the same caution
@@ -42,8 +42,8 @@ const MAX_DIST_Y_FRAC: f64 = 0.002;
 /// the window's top row), not absolute page coordinates.
 type RowBox = (f64, f64, f64, f64);
 
-/// `get_bbox_crop_margin_page_number()`.
-pub fn get_bbox_crop_margin_page_number(
+/// Upstream's `get_bbox_crop_margin_page_number()`.
+pub fn content_bbox_ignoring_page_number(
     img: &GrayImage,
     power: f32,
     background: Background,
@@ -147,7 +147,7 @@ pub fn compute_margin_crop_ignoring_page_number(
     img: &GrayImage,
     policy: &CropPolicy,
 ) -> Option<CropBox> {
-    let bbox = get_bbox_crop_margin_page_number(img, policy.power, policy.background)?;
+    let bbox = content_bbox_ignoring_page_number(img, policy.power, policy.background)?;
     apply_policy(bbox, img.dimensions(), policy)
 }
 
@@ -231,7 +231,7 @@ mod tests {
         // Main content, then an isolated small "page number" blob well
         // below it (within size limits: <0.045*W=36 wide, <0.02*H=24 tall).
         let img = page_with_rects(&[(40, 40, 760, 1100), (385, 1140, 415, 1160)]);
-        let bbox = get_bbox_crop_margin_page_number(&img, 1.0, Background::White)
+        let bbox = content_bbox_ignoring_page_number(&img, 1.0, Background::White)
             .expect("content should be detected");
         // The page number (bottom ~1160) must be excluded; the result
         // should track the main content's actual bottom edge (~1100), not
@@ -249,7 +249,7 @@ mod tests {
             (200, 1140, 220, 1160),
             (500, 1140, 520, 1160),
         ]);
-        let bbox = get_bbox_crop_margin_page_number(&img, 1.0, Background::White)
+        let bbox = content_bbox_ignoring_page_number(&img, 1.0, Background::White)
             .expect("content should be detected");
         // Nothing should be cropped off: bottom should still reach down to
         // the lower blobs (~1160), not stop at the main content (~1100).
@@ -261,7 +261,7 @@ mod tests {
         // A single blob at the bottom, but too wide (>0.045*W=36) to
         // plausibly be a 1-3 digit page number.
         let img = page_with_rects(&[(40, 40, 760, 1100), (300, 1140, 500, 1160)]);
-        let bbox = get_bbox_crop_margin_page_number(&img, 1.0, Background::White)
+        let bbox = content_bbox_ignoring_page_number(&img, 1.0, Background::White)
             .expect("content should be detected");
         assert!(bbox.bottom > 1150, "bottom={}", bbox.bottom);
     }
@@ -270,7 +270,7 @@ mod tests {
     fn content_reaching_all_the_way_down_is_left_alone() {
         // No separate page number at all — content fills the whole window.
         let img = page_with_rects(&[(40, 40, 760, 1160)]);
-        let bbox = get_bbox_crop_margin_page_number(&img, 1.0, Background::White)
+        let bbox = content_bbox_ignoring_page_number(&img, 1.0, Background::White)
             .expect("content should be detected");
         assert!(bbox.bottom > 1150, "bottom={}", bbox.bottom);
     }

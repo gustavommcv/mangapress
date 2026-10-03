@@ -448,7 +448,7 @@ fn build_opf(
     )
 }
 
-/// One page's XHTML. Port target: `buildHTML()` in upstream's
+/// One page's XHTML. Upstream reference: `buildHTML()` in upstream's
 /// `comic2ebook.py` — the image is an *inline* `<img>` carrying its own pixel
 /// size as `width`/`height` attributes, inside a `text-align:center` block,
 /// under the same two stylesheet rules upstream ships in its `style.css`.

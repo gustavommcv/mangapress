@@ -1,6 +1,6 @@
 //! The book's cover image, built from its untouched first image.
 //!
-//! Port target: `Cover` in KCC's `image.py` (GPLv3 upstream — reimplemented
+//! Upstream reference: `Cover` in KCC's `image.py` (GPLv3 upstream — reimplemented
 //! from documented behavior, not copied; see
 //! `docs/adr/0007-gplv3-boundary-kcc-image-rs.md`).
 //!
@@ -82,7 +82,7 @@ fn finish_cover<P: image::Pixel<Subpixel = u8> + 'static>(
 ) -> Result<(Vec<u8>, bool)> {
     let smart_cropped = options.smart_crop && cover.width() > cover.height();
     let cover = if options.smart_crop {
-        crop_main_cover(cover, options.right_to_left)
+        cut_front_cover(cover, options.right_to_left)
     } else {
         cover
     };
@@ -103,14 +103,14 @@ fn finish_cover<P: image::Pixel<Subpixel = u8> + 'static>(
     Ok((bytes, smart_cropped))
 }
 
-/// `crop_main_cover()`: the front cover's place in a wide first image, by
-/// how wide the image is. Each band of aspect ratios is a kind of scan —
-/// from a full jacket with flaps (over 2:1) down to a plain two-page spread
-/// — with the fraction of the width upstream found the front cover to
-/// occupy in it; right-to-left books have it on the left of the spine,
+/// Upstream's `crop_main_cover()`: the front cover's place in a wide first
+/// image, by how wide the image is. Each band of aspect ratios is a kind of
+/// scan — from a full jacket with flaps (over 2:1) down to a plain two-page
+/// spread — with the fraction of the width upstream found the front cover
+/// to occupy in it; right-to-left books have it on the left of the spine,
 /// left-to-right ones on the right. An image no wider than it is tall is
 /// already a cover and is returned whole.
-fn crop_main_cover<P: image::Pixel<Subpixel = u8> + 'static>(
+fn cut_front_cover<P: image::Pixel<Subpixel = u8> + 'static>(
     image: Buffer<P>,
     right_to_left: bool,
 ) -> Buffer<P> {
@@ -263,7 +263,7 @@ mod tests {
                 // Every pixel holds its own column, in 5-column steps, so the
                 // crop's left edge can be read back out of the result.
                 let image = GrayImage::from_fn(size.0, size.1, |x, _| Luma([(x / 5 % 256) as u8]));
-                let cropped = crop_main_cover(image, right_to_left);
+                let cropped = cut_front_cover(image, right_to_left);
                 assert_eq!(
                     cropped.dimensions(),
                     (width, size.1),

@@ -1,6 +1,6 @@
 //! Resize filter selection and execution.
 //!
-//! Port target: `resize_method()` and `resizeImage()` in KCC's `image.py`
+//! Upstream reference: `resize_method()` and `resizeImage()` in KCC's `image.py`
 //! (GPLv3-licensed upstream — reimplement from this spec, do not copy; see
 //! `docs/adr/0007-gplv3-boundary-kcc-image-rs.md`). Out of scope from
 //! `resizeImage()`: the `--kfx` branch (KFX isn't a supported output format
@@ -92,9 +92,9 @@ pub fn resize_page<P: image::Pixel<Subpixel = u8> + 'static>(
         return img.clone();
     }
 
-    let ratio_device = options.target.1 as f64 / options.target.0 as f64;
-    let ratio_image = src.1 as f64 / src.0 as f64;
-    let diff = (ratio_image - ratio_device).abs();
+    let device_aspect = options.target.1 as f64 / options.target.0 as f64;
+    let page_aspect = src.1 as f64 / src.0 as f64;
+    let diff = (page_aspect - device_aspect).abs();
 
     let kdx_tolerance_clears = options.is_kdx_profile && diff < ASPECT_MATCH_TOLERANCE * 3.0;
     if kdx_tolerance_clears || diff < ASPECT_MATCH_TOLERANCE {
@@ -444,13 +444,13 @@ mod tests {
         // A ratio difference that clears the normal tolerance but not the
         // KDX-widened one (3x).
         let (tw, th) = (824u32, 1000u32); // KDX resolution
-        let ratio_device = th as f64 / tw as f64;
-        // Pick a source ratio whose diff from ratio_device sits strictly
+        let device_aspect = th as f64 / tw as f64;
+        // Pick a source ratio whose diff from device_aspect sits strictly
         // between the normal and KDX tolerances.
         let diff = ASPECT_MATCH_TOLERANCE * 2.0;
-        let ratio_image = ratio_device + diff;
+        let page_aspect = device_aspect + diff;
         let sw = 2000u32;
-        let sh = (sw as f64 * ratio_image).round() as u32;
+        let sh = (sw as f64 * page_aspect).round() as u32;
         let img = GrayImage::from_pixel(sw, sh, Luma([0]));
 
         let mut options = default_options((tw, th));

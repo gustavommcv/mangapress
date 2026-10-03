@@ -1,8 +1,8 @@
 //! `ComicInfo.xml` reading and title/author resolution.
 //!
-//! Port target: `MetadataParser` and `getMetadata()`'s title/author
+//! Upstream reference: `MetadataParser` and `getMetadata()`'s title/author
 //! precedence logic in KCC's `metadata.py`/`comic2ebook.py`. Unlike most of
-//! `mangapress-core`'s other port targets, `metadata.py` carries a normal
+//! `mangapress-core`'s other upstream references, `metadata.py` carries a normal
 //! ISC header upstream (see `docs/adr/0007-gplv3-boundary-kcc-image-rs.md`
 //! for which files *don't*) — still reimplemented in Rust idiom here
 //! rather than transliterated, but with less of the extra GPL-boundary

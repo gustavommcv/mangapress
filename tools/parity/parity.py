@@ -1,0 +1,268 @@
+"""Checks mangapress against upstream KCC, page by page.
+
+Runs KCC's own code (from a checkout you provide) and mangapress's real
+pipeline over the same pages, under a matrix of options, and fails if they
+disagree on anything that isn't codec or resampler noise:
+
+  - the page's detected background;
+  - how many pages a source page becomes, in which order, and what each is
+    (ordinary page, first/second half of a spread, rotated spread);
+  - each output page's size, and whether it is grayscale or colour;
+  - the pixels, within a small mean difference;
+  - and, where both sides only move pixels around, the pixels exactly: the
+    palette dither given the same input, and webtoon strips cut into pages.
+
+    python tools/parity/parity.py --kcc /path/to/kcc            # synthetic corpus
+    python tools/parity/parity.py --kcc /path/to/kcc --pages DIR  # plus your own pages
+
+See README.md next to this file.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+import numpy as np
+from PIL import Image
+
+import make_corpus
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(os.path.dirname(HERE))
+
+# The KCC release mangapress follows. Another version still runs, with a
+# warning: differences may then be KCC's own between releases.
+REFERENCE_KCC = "12.0.0"
+
+# Mean absolute difference allowed between the two tools' pixels, in levels
+# out of 255. Both pipelines resample with different libraries (Pillow, the
+# Rust `image` crate) that agree to within a level per pixel; a real
+# divergence — a different crop, a contrast stretch applied by one side only
+# — shows up as several levels.
+GRAY_LIMIT = 1.0
+COLOUR_LIMIT = 1.5
+
+PROFILE = "K11"
+KCC_BASE = ["-p", PROFILE, "-m", "-u", "-f", "EPUB"]
+DUMP_BASE = ["--manga", "--upscale"]
+SPLIT_BOTH = (["-r", "2"], ["--splitter=both"])
+
+# name, corpus list, extra KCC arguments, extra parity_dump flags, and
+# optionally replacement base arguments for either side.
+SCENARIOS = [
+    ("default options", "pages", SPLIT_BOTH[0], SPLIT_BOTH[1]),
+    ("spreads: split", "spreads", ["-r", "0"], ["--splitter=split"]),
+    ("spreads: rotate", "spreads", ["-r", "1"], ["--splitter=rotate"]),
+    ("spreads: split and rotate", "spreads", *SPLIT_BOTH),
+    ("spreads: rotated copy first", "spreads", ["-r", "2", "--rotatefirst"], ["--splitter=both", "--rotatefirst"]),
+    ("spreads: not rotated", "spreads", ["-r", "2", "--norotate"], ["--splitter=both", "--norotate"]),
+    ("spreads: rotated clockwise", "spreads", ["-r", "2", "--rotateright"], ["--splitter=both", "--rotateright"]),
+    ("strips restacked 2x2", "spreads", ["-r", "2", "--maximizestrips"], ["--splitter=both", "--maximizestrips"]),
+    ("crop: margins only", "pages", ["-r", "2", "-c", "1"], ["--splitter=both", "--crop=margins"]),
+    ("crop: none", "pages", ["-r", "2", "-c", "0"], ["--splitter=both", "--crop=disabled"]),
+    ("crop: between panels, rows", "pages", ["-r", "2", "--ipc", "1"], ["--splitter=both", "--ipc=horizontal"]),
+    ("crop: between panels, rows and columns", "pages", ["-r", "2", "--ipc", "2"], ["--splitter=both", "--ipc=both"]),
+    ("autolevel", "pages", ["-r", "2", "--autolevel"], ["--splitter=both", "--autolevel"]),
+    ("no autocontrast", "pages", ["-r", "2", "--noautocontrast"], ["--splitter=both", "--noautocontrast"]),
+    ("gamma 1.8", "pages", ["-r", "2", "-g", "1.8"], ["--splitter=both", "--gamma=1.8"]),
+    ("stretch", "pages", ["-r", "2", "-s"], ["--splitter=both", "--stretch"]),
+    ("rainbow eraser", "pages", ["-r", "2", "--eraserainbow"], ["--splitter=both", "--eraserainbow"]),
+    ("no upscale", "pages", ["-r", "2"], ["--splitter=both"], ["-p", PROFILE, "-m", "-f", "EPUB"], ["--manga"]),
+    ("CBZ: padded to the screen", "spreads", ["-r", "2"], ["--splitter=both", "--format=cbz"], ["-p", PROFILE, "-m", "-u", "-f", "CBZ"]),
+    ("CBZ: black borders", "pages", ["-r", "2", "--blackborders"], ["--splitter=both", "--format=cbz", "--blackborders"], ["-p", PROFILE, "-m", "-u", "-f", "CBZ"]),
+    ("CBZ: white borders", "pages", ["-r", "2", "--whiteborders"], ["--splitter=both", "--format=cbz", "--whiteborders"], ["-p", PROFILE, "-m", "-u", "-f", "CBZ"]),
+    ("colour pages, grayscale output", "colour", *SPLIT_BOTH),
+    ("colour pages, grayscale output, colour autocontrast", "colour", ["-r", "2", "--colorautocontrast"], ["--splitter=both", "--colorautocontrast"]),
+    ("colour output", "colour", ["-r", "2", "--forcecolor"], ["--splitter=both", "--forcecolor"]),
+    ("colour output, autocontrast and autolevel", "colour", ["-r", "2", "--forcecolor", "--colorautocontrast", "--autolevel"],
+     ["--splitter=both", "--forcecolor", "--colorautocontrast", "--autolevel"]),
+    ("colour output, rainbow eraser", "colour", ["-r", "2", "--forcecolor", "--eraserainbow"], ["--splitter=both", "--forcecolor", "--eraserainbow"]),
+    ("colour output, gamma 1.8", "colour", ["-r", "2", "--forcecolor", "-g", "1.8"], ["--splitter=both", "--forcecolor", "--gamma=1.8"]),
+]
+
+ROLES = {"N": "Normal", "S1": "SplitFirst", "S2": "SplitSecond", "R": "Rotated"}
+
+# Device palettes, for the dither check: the gray levels each profile's
+# screen shows.
+PALETTES = {
+    "K11": [level * 17 for level in range(16)],
+    "K2": [level * 17 for level in range(14)] + [255],
+    "K1": [0, 85, 170, 255],
+}
+
+
+class Report:
+    def __init__(self):
+        self.failures = []
+        self.checked = 0
+
+    def fail(self, where, what):
+        self.failures.append(f"{where}: {what}")
+
+    def ok(self):
+        self.checked += 1
+
+
+def run(command, **kwargs):
+    result = subprocess.run(command, capture_output=True, text=True, **kwargs)
+    if result.returncode != 0:
+        raise SystemExit(f"command failed: {' '.join(command)}\n{result.stdout}\n{result.stderr}")
+    return result.stdout
+
+
+def compare_pages(report, name, files, kcc_dir, dump_dir):
+    kcc = json.load(open(os.path.join(kcc_dir, "kcc.json")))["pages"]
+    ours = json.load(open(os.path.join(dump_dir, "mangapress.json")))["pages"]
+    worst = 0.0
+    for path, theirs, mine in zip(files, kcc, ours):
+        where = f"{name} / {os.path.basename(path)}"
+        if theirs["background"] != mine["background"]:
+            report.fail(where, f"background KCC {theirs['background']}, mangapress {mine['background']}")
+            continue
+        their_roles = [ROLES[piece["mode"]] for piece in theirs["pieces"]]
+        my_roles = [piece["role"] for piece in mine["pieces"]]
+        if their_roles != my_roles:
+            report.fail(where, f"pages produced: KCC {their_roles}, mangapress {my_roles}")
+            continue
+        for a, b in zip(theirs["pieces"], mine["pieces"]):
+            if a["size"] != b["size"]:
+                report.fail(where, f"{ROLES[a['mode']]} size KCC {a['size']}, mangapress {b['size']}")
+                continue
+            if a["black_background"] != b["black_background"]:
+                report.fail(where, f"black page background KCC {a['black_background']}, mangapress {b['black_background']}")
+                continue
+            x = Image.open(os.path.join(kcc_dir, a["file"]))
+            y = Image.open(os.path.join(dump_dir, b["file"]))
+            if x.mode != y.mode:
+                report.fail(where, f"KCC wrote {x.mode}, mangapress {y.mode}")
+                continue
+            difference = np.abs(np.asarray(x, dtype=np.int16) - np.asarray(y, dtype=np.int16)).mean()
+            worst = max(worst, difference)
+            limit = COLOUR_LIMIT if x.mode == "RGB" else GRAY_LIMIT
+            if difference > limit:
+                report.fail(where, f"{ROLES[a['mode']]} pixels differ by {difference:.2f} levels on average (limit {limit})")
+            else:
+                report.ok()
+    return worst
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--kcc", required=True, help="path to a KCC checkout (the directory containing kindlecomicconverter/)")
+    parser.add_argument("--pages", help="a folder of your own pages to add to the default scenario (they stay local)")
+    parser.add_argument("--work", default=os.path.join(REPO, "target", "parity"), help="where to write everything")
+    parser.add_argument("--only", help="run only the scenarios whose name contains this text")
+    args = parser.parse_args()
+
+    kcc = os.path.abspath(args.kcc)
+    if not os.path.isfile(os.path.join(kcc, "kindlecomicconverter", "image.py")):
+        raise SystemExit(f"{kcc} doesn't look like a KCC checkout")
+    work = os.path.abspath(args.work)
+    os.makedirs(work, exist_ok=True)
+    oracle = [sys.executable, os.path.join(HERE, "kcc_oracle.py"), kcc]
+
+    print("building parity_dump ...")
+    run(["cargo", "build", "--release", "-p", "mangapress-core", "--example", "parity_dump"], cwd=REPO)
+    dump = os.path.join(REPO, "target", "release", "examples", "parity_dump")
+
+    corpus = make_corpus.write(os.path.join(work, "corpus"))
+    scenarios = list(SCENARIOS)
+    if args.pages:
+        extensions = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+        corpus["yours"] = sorted(os.path.join(root, name) for root, _, names in os.walk(os.path.abspath(args.pages))
+                                 for name in names if name.lower().endswith(extensions))
+        scenarios.append(("your pages, default options", "yours", *SPLIT_BOTH))
+        scenarios.append(("your pages, colour output", "yours", ["-r", "2", "--forcecolor"], ["--splitter=both", "--forcecolor"]))
+        print(f"{len(corpus['yours'])} of your own pages added")
+
+    report = Report()
+    version = None
+    for index, (name, key, kcc_extra, dump_extra, *bases) in enumerate(scenarios):
+        if args.only and args.only not in name:
+            continue
+        files = corpus[key]
+        list_file = os.path.join(work, f"list_{key}.txt")
+        open(list_file, "w").write("\n".join(files) + "\n")
+        kcc_dir, dump_dir = os.path.join(work, f"{index:02d}_kcc"), os.path.join(work, f"{index:02d}_mangapress")
+        kcc_base = bases[0] if bases else KCC_BASE
+        dump_base = bases[1] if len(bases) > 1 else DUMP_BASE
+        out = run(oracle + [kcc_dir, list_file] + kcc_base + kcc_extra)
+        version = out.split(":")[0].replace("KCC ", "").strip()
+        run([dump, dump_dir, list_file, PROFILE] + dump_base + dump_extra)
+        before = len(report.failures)
+        worst = compare_pages(report, name, files, kcc_dir, dump_dir)
+        status = "ok  " if len(report.failures) == before else "FAIL"
+        print(f"  {status} {name:52s} {len(files):3d} pages, largest mean difference {worst:.2f}")
+
+    if not args.only or "dither" in args.only:
+        # The same grayscale page into both quantizers: every pixel must land
+        # on the same level. Upstream's is one Pillow call.
+        grays = sorted(os.path.join(work, "00_kcc", name) for name in os.listdir(os.path.join(work, "00_kcc")) if name.endswith(".png")) \
+            if os.path.isdir(os.path.join(work, "00_kcc")) else []
+        list_file = os.path.join(work, "list_gray.txt")
+        open(list_file, "w").write("\n".join(grays) + "\n")
+        for profile, levels in PALETTES.items():
+            out_dir = os.path.join(work, f"dither_{profile}")
+            run([dump, out_dir, list_file, profile, "--quantize-only"])
+            palette = Image.new("P", (1, 1))
+            palette.putpalette([value for level in levels for value in (level, level, level)])
+            differing = 0
+            for number, path in enumerate(grays):
+                theirs = np.asarray(Image.open(path).convert("L").convert("RGB").quantize(palette=palette).convert("L"))
+                mine = np.asarray(Image.open(os.path.join(out_dir, f"{number:04d}.png")).convert("L"))
+                differing += int((theirs != mine).sum())
+            if differing:
+                report.fail(f"dither, {len(levels)} levels", f"{differing} pixels differ from Pillow's")
+            else:
+                report.ok()
+            print(f"  {'ok  ' if not differing else 'FAIL'} dither to {len(levels):2d} levels, same input{'':24s} {len(grays):3d} pages, {differing} pixels differ")
+
+    if not args.only or "webtoon" in args.only:
+        width, height = 1072, 1448
+        for name, chapter in corpus["webtoon"].items():
+            kcc_dir, dump_dir = os.path.join(work, f"{name}_kcc"), os.path.join(work, f"{name}_mangapress")
+            run(oracle + [kcc_dir, "--webtoon-dir", chapter, str(width), str(height)])
+            for stale in (os.listdir(dump_dir) if os.path.isdir(dump_dir) else []):
+                os.unlink(os.path.join(dump_dir, stale))
+            run([dump, dump_dir, chapter, PROFILE, "--webtoon-dir"])
+            theirs = sorted(os.listdir(kcc_dir))
+            mine = sorted(page for page in os.listdir(dump_dir) if page.startswith("page-"))
+            same_image = lambda a, b: np.array_equal(np.asarray(Image.open(a).convert("RGB")), np.asarray(Image.open(b).convert("RGB")))
+            problem = None
+            if not same_image(kcc_dir + "_strip.png", os.path.join(dump_dir, "strip.png")):
+                problem = "merged strips differ"
+            elif len(theirs) != len(mine):
+                problem = f"KCC cut {len(theirs)} pages, mangapress {len(mine)}"
+            elif not all(same_image(os.path.join(kcc_dir, a), os.path.join(dump_dir, b)) for a, b in zip(theirs, mine)):
+                problem = "cut pages differ"
+            if problem:
+                report.fail(f"webtoon / {name}", problem)
+            else:
+                report.ok()
+            print(f"  {'ok  ' if not problem else 'FAIL'} webtoon strips cut into pages: {name:20s} {len(theirs):3d} pages, {'identical' if not problem else problem}")
+
+            # ...and those pages through the rest of webtoon mode.
+            pages = [os.path.join(kcc_dir, page) for page in theirs]
+            list_file = os.path.join(work, f"list_{name}.txt")
+            open(list_file, "w").write("\n".join(pages) + "\n")
+            run(oracle + [kcc_dir + "_pages", list_file, "-p", PROFILE, "-w", "-f", "EPUB"])
+            run([dump, dump_dir + "_pages", list_file, PROFILE, "--webtoon"])
+            before = len(report.failures)
+            worst = compare_pages(report, f"webtoon pages / {name}", pages, kcc_dir + "_pages", dump_dir + "_pages")
+            print(f"  {'ok  ' if len(report.failures) == before else 'FAIL'} webtoon pages processed: {name:26s} {len(pages):3d} pages, largest mean difference {worst:.2f}")
+
+    print()
+    if version and version != REFERENCE_KCC:
+        print(f"note: this checkout is KCC {version}; mangapress follows {REFERENCE_KCC}, so a difference may be KCC's own between the two")
+    if report.failures:
+        print(f"{len(report.failures)} difference(s) from KCC {version}:")
+        for failure in report.failures:
+            print("  -", failure)
+        raise SystemExit(1)
+    print(f"mangapress matches KCC {version}: {report.checked} checks passed")
+
+
+if __name__ == "__main__":
+    main()

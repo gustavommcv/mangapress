@@ -57,7 +57,8 @@ pipeline (per-page background and color detection, margin and page-number-aware 
 inter-panel cropping, resize, gamma/autocontrast, double-page-spread split/rotate, rainbow-artifact
 removal, grayscale or color output, palette quantization), webtoon mode (long strips cut into pages
 between panels), `ComicInfo.xml` metadata and bookmarks, and EPUB/CBZ/PDF output all work end to end
-and are covered by an extensive test suite, checked page by page against upstream KCC 12.0.0 — see
+and are covered by an extensive test suite, checked page by page against upstream KCC 12.0.0 by
+running KCC's own code next to it ([tools/parity](tools/parity/README.md)) — see
 [docs/adr](docs/adr/README.md) for the design decisions made so far, and open an issue if you hit
 a rough edge. Still pre-1.0.
 

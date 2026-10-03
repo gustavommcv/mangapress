@@ -46,6 +46,10 @@ Dry-run emits inspect, metadata, and plan stages followed by a result with `dry_
 conversion result includes title, author, format, profile, resolution, chapter count, source and
 output page counts, absolute output path, byte count, and `written: true`.
 
+`format` is always one of `epub`, `cbz` and `pdf`, in every event that carries it. It is the
+format, not the file's extension: a Kobo profile's EPUB is named `.kepub.epub` and its format is
+still `epub`.
+
 Page work may finish on different worker threads, but events are serialized. `sequence` and the
 page event's global `completed` value always increase by exactly one. A page event's `page` is its
 one-based position within the named chapter.

@@ -976,11 +976,11 @@ fn run<W: std::io::Write + Send>(
         && !cli.nokepub
         && cli.customwidth.unwrap_or(0) == 0
         && cli.customheight.unwrap_or(0) == 0;
-    let extension = if kepub {
-        "kepub.epub"
-    } else {
-        format_name(cli.format)
-    };
+    // What the events call the format is the format itself. The file's
+    // extension is a different thing for a kepub, and reporting it as the
+    // format ("kepub.epub") is not a value the protocol has.
+    let format = format_name(cli.format);
+    let extension = if kepub { "kepub.epub" } else { format };
     let output_path = match &cli.output {
         Some(path) if path.is_dir() => {
             path.join(format!("{}.{extension}", sanitize_filename(&title)))
@@ -1054,7 +1054,7 @@ fn run<W: std::io::Write + Send>(
                 "state": "completed",
                 "manga": title.clone(),
                 "output_path": output_path_absolute.clone(),
-                "format": extension,
+                "format": format,
                 "profile": profile.code,
                 "device": profile.display_name,
                 "width": width,
@@ -1077,7 +1077,7 @@ fn run<W: std::io::Write + Send>(
                         "dry_run": true,
                         "manga": title,
                         "author": author,
-                        "format": extension,
+                        "format": format,
                         "profile": profile.code,
                         "width": width,
                         "height": height,
@@ -1353,7 +1353,7 @@ fn run<W: std::io::Write + Send>(
                 "stage": "package",
                 "state": "started",
                 "manga": title.clone(),
-                "format": extension,
+                "format": format,
             }),
         )
         .map_err(event_write_failure)?;
@@ -1475,7 +1475,7 @@ fn run<W: std::io::Write + Send>(
                 "stage": "package",
                 "state": "completed",
                 "manga": title.clone(),
-                "format": extension,
+                "format": format,
                 "bytes": output_bytes.len(),
             }),
         )
@@ -1531,7 +1531,7 @@ fn run<W: std::io::Write + Send>(
                 "dry_run": false,
                 "manga": title,
                 "author": result_author,
-                "format": extension,
+                "format": format,
                 "profile": profile.code,
                 "width": width,
                 "height": height,

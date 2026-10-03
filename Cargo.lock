@@ -1184,7 +1184,7 @@ dependencies = [
 
 [[package]]
 name = "mangapress-cli"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1199,7 +1199,7 @@ dependencies = [
 
 [[package]]
 name = "mangapress-core"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "image",
  "imageproc",

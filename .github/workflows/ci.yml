@@ -40,6 +40,8 @@ jobs:
         run: python -m unittest discover -s tools/licenses -p "test_*.py"
       - name: Release tag validation tests
         run: python -m unittest discover -s tools/release -p "test_*.py"
+      - name: Installer regression tests
+        run: python -m unittest discover -s tools/installers -p "test_*.py" -v
 
   dependency-notices:
     runs-on: ${{ matrix.os }}
@@ -89,5 +91,7 @@ jobs:
         run: |
           "$(go env GOPATH)/bin/actionlint" -version
           "$(go env GOPATH)/bin/actionlint"
+      - name: Check POSIX installer syntax
+        run: shellcheck --shell=sh install.sh
       - name: Check dependency advisories
         run: cargo audit --deny warnings

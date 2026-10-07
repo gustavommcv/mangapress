@@ -30,6 +30,8 @@ packaging are defined in [the release workflow](.github/workflows/release.yml).
 Dependency changes also require the four target-specific
 [license-notice checks](tools/licenses/README.md). CI and release packaging use the same
 generator; review its reports rather than accepting missing notices or generic fallback text.
+Installer changes also require the [offline installer checks](tools/installers/README.md),
+which run the actual scripts with native hashing and extraction on their supported platforms.
 
 ## Where to make a change
 

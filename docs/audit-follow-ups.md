@@ -13,7 +13,7 @@ verified remote checks for the exact commit, as described in [CONTRIBUTING](../C
 | Dependency cleanup | 11 | In progress; unused crates removed and image codecs restricted to the supported page formats |
 | Distributed dependency license notices | 12 | In progress; target-specific source notices generated and checked for release archives |
 | CI and release checks | 13 | In progress; pinned tools/actions, locked checks, advisory checks, and shared release gates |
-| Installer checksums and version selection | 13 | Not started |
+| Installer checksums and version selection | 13 | In progress; version-pinned downloads, checksum checks, and installed license notices |
 | CLI diagnostics, help, and documentation | 8, 10, 15 | Not started |
 | Final pre-release parity review | Follow-up to 16 | Planned after the audit PRs, before the next release |
 
@@ -61,9 +61,9 @@ packaging, and reject generic fallback text that loses copyright attribution. Bu
 dependencies are included conservatively, not claimed as code present in the executable.
 The original KCC/Pillow notices and mangapress's own license remain unchanged.
 
-The installer follow-up must also preserve these files after extraction: Windows already
-keeps archive contents, but the Unix installer currently moves only the executable.
-Do not consider that installation path covered by archive generation alone.
+The installer follow-up preserves these files after extraction: Unix keeps them in a
+dedicated `mangapress-licenses` folder and Windows beside the executable. Installer tests
+check the installed files, rather than treating archive generation alone as verification.
 
 ## CI and release scope
 

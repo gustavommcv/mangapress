@@ -37,10 +37,30 @@ irm https://raw.githubusercontent.com/gustavommcv/mangapress/main/install.ps1 | 
 The scripts install the latest release to `~/.local/bin` on macOS/Linux or
 `%LOCALAPPDATA%\Programs\mangapress` on Windows. Follow the printed `PATH` instructions if needed;
 on Windows, restart your terminal after installation. The Unix install folder can be changed with
-`MANGAPRESS_INSTALL_DIR`.
+`MANGAPRESS_INSTALL_DIR`; the same variable also works on Windows.
 
-Each release includes `checksums.txt` for manual verification. Archives contain the executable,
-license texts, and [third-party notices](THIRD-PARTY-NOTICES.md).
+The installers resolve the release once, verify the selected package against that release's
+`checksums.txt`, and check the executable's version before replacing an installation. Missing
+checksums or failed verification stop installation. This checks download integrity, not signed
+authenticity: the package and checksums are published by the same repository.
+Archives contain the executable, license texts, and [third-party notices](THIRD-PARTY-NOTICES.md).
+The Unix installer keeps the included notices in `mangapress-licenses` inside the install folder;
+Windows keeps them beside the executable. Older releases without a checksum file must be installed
+manually rather than bypassing verification.
+
+To select a published version, set `MANGAPRESS_VERSION` (with or without its `v` prefix):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/gustavommcv/mangapress/main/install.sh | MANGAPRESS_VERSION=v0.7.2 sh
+```
+
+```powershell
+$env:MANGAPRESS_VERSION = 'v0.7.2'
+irm https://raw.githubusercontent.com/gustavommcv/mangapress/main/install.ps1 | iex
+```
+
+Unset the variable or use `latest` to return to the latest release. For automated Windows
+installations that should not change the user `Path`, set `MANGAPRESS_NO_PATH_UPDATE=1`.
 
 With the Rust version listed in [contributor setup](CONTRIBUTING.md#setup-and-checks),
 you can also build the current development version:
@@ -56,9 +76,11 @@ For a Git-based Cargo installation, add `--force` to rebuild the current version
 
 ### Uninstall
 
-On macOS/Linux, delete `~/.local/bin/mangapress`, or the executable in your custom install folder.
+On macOS/Linux, delete `~/.local/bin/mangapress` and `~/.local/bin/mangapress-licenses`,
+or those same entries in your custom install folder. Do not delete a shared `bin` folder.
 On Windows, delete `%LOCALAPPDATA%\Programs\mangapress` and optionally remove that folder from
-your user `Path` in Environment Variables. For a Cargo installation, run
+your user `Path` in Environment Variables. For a shared custom folder, remove only the executable
+and included notices, not the folder itself. For a Cargo installation, run
 `cargo uninstall mangapress-cli`.
 
 ## Usage

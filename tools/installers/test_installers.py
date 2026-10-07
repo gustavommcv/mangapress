@@ -114,11 +114,11 @@ class InstallerCases:
         if include_binary:
             files[self.executable_name] = self.binary.read_bytes()
         if WINDOWS:
-            with zipfile.ZipFile(self.archive, "w", zipfile.ZIP_DEFLATED) as archive:
+            with zipfile.ZipFile(self.archive, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
                 for name, data in files.items():
                     archive.writestr(name, data)
         else:
-            with tarfile.open(self.archive, "w:gz") as archive:
+            with tarfile.open(self.archive, "w:gz", compresslevel=1) as archive:
                 for name, data in files.items():
                     entry = tarfile.TarInfo(name)
                     entry.size = len(data)
@@ -273,7 +273,7 @@ class PosixInstallerTests(InstallerCases, unittest.TestCase):
     engine = "sh"
 
     def restrict_path(self, include_shasum):
-        commands = ["uname", "mktemp", "grep", "awk", "tar", "chmod", "mkdir", "install", "rm"]
+        commands = ["uname", "mktemp", "grep", "awk", "tar", "gzip", "chmod", "mkdir", "install", "rm"]
         if include_shasum:
             commands.append("shasum")
         for name in commands:

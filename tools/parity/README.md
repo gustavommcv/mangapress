@@ -1,99 +1,66 @@
-# Parity check against upstream KCC
+# Comparing image processing with KCC
 
-mangapress follows [KCC](https://github.com/ciromattia/kcc) **12.0.0**: given the same pages and
-the same options, it is meant to produce the same pages. This directory is how that claim is
-checked, rather than asserted. It runs KCC's own code and mangapress's real pipeline over the same
-images and compares what comes out.
+These tools run mangapress and [KCC](https://github.com/ciromattia/kcc) **12.0.0** on the same
+images and compare their results. Use them for changes that affect processed pixels. They run
+separately from `cargo test`.
 
-It is not part of `cargo test`: it needs Python and a KCC checkout. Run it when touching anything
-under `crates/mangapress-core/src` that changes pixels, and whenever KCC makes a release.
+## Run the comparison
 
-## Running it
+You need a Rust toolchain and Python 3 with Pillow and NumPy. From the mangapress repository
+root, clone the reference release into a separate folder:
 
-```bash
-git clone --depth 1 --branch v12.0.0 https://github.com/ciromattia/kcc /somewhere/kcc
+```sh
+git clone --depth 1 --branch v12.0.0 https://github.com/ciromattia/kcc ../kcc-reference
+python tools/parity/parity.py --kcc ../kcc-reference
 ```
 
-```bash
-python tools/parity/parity.py --kcc /somewhere/kcc
-```
+The driver supplies substitutes for KCC imports that the comparison does not use, so the full
+KCC dependency set is not required. A failing comparison lists differences and exits nonzero.
 
-Needs Python 3 with Pillow and NumPy, and a Rust toolchain. Nothing else of KCC's requirements has
-to be installed: the driver stands in for the modules KCC imports but this check never reaches.
-A full run takes about five minutes and ends with either `mangapress matches KCC 12.0.0` or a list
-of every difference, and a non-zero exit status.
+- `--only TEXT` runs scenarios whose names contain the text.
+- `--pages DIR` adds your own pages to the default and color-output scenarios.
+- `--work DIR` changes the output folder; the default is the ignored `target/parity/`.
 
-Two options narrow or widen it:
+Inspect the generated PNGs from both tools when investigating a difference. Keep private pages
+outside the repository; the built-in corpus uses generated images.
 
-- `--only TEXT` runs just the scenarios whose name contains `TEXT`.
-- `--pages DIR` adds your own pages (default options, and color output). They are read where they
-  are and never copied into the repository. The built-in corpus is drawn by a program, because
-  real comic pages must not be committed; your own pages are the better test of real scans.
+## What is checked
 
-Everything is written under `target/parity/`, which git ignores: each scenario's pages from both
-tools, as PNG, so a reported difference can be looked at.
+| Property | Expected match |
+| --- | --- |
+| Detected background and black-background flag | Exact |
+| Output page count, order, and page/spread type | Exact |
+| Page dimensions and grayscale/color classification | Exact |
+| Decoded pixels | Mean difference at most 1.0 gray level, or 1.5 for color |
 
-## What is compared
+Palette dithering, webtoon joining, and webtoon splitting have separate pixel-exact comparisons.
+The dither checks use 16-, 15-, and 4-level palettes.
 
-For every source page, in every scenario:
+The pixel tolerance accounts for JPEG encoding and decoding differences. A passing comparison
+applies to the tested scenarios; it is not a guarantee for every image, option, or device.
 
-| | Must be |
-|---|---|
-| Detected background (light or dark) | the same |
-| Pages produced, their order, and what each is (page, half of a spread, rotated spread) | the same |
-| Size of each output page | the same |
-| Grayscale or color | the same |
-| Black page background flag | the same |
-| Pixels | within 1.0 gray level on average (1.5 for color) |
+## Limits
 
-And three things exactly, pixel for pixel, because both tools only move pixels around there:
+The main scenarios use Kindle 11 (`K11`, 1072 × 1448). The upright-spread scenario uses a Kobo
+profile at the same resolution to account for a deliberate difference from KCC.
 
-- the palette dither, given the same grayscale page (for the 16-, 15- and 4-level palettes);
-- a webtoon chapter merged into one strip;
-- that strip cut into pages.
-
-The pixel tolerance is not slack for real differences. Resizing, gray conversion, contrast and
-dithering are reproduced exactly; what is left is that mangapress's pages reach the comparison
-through a JPEG (quality 100) and that the two tools decode JPEG sources with different libraries.
-That is worth a few tenths of a level. A real difference — a crop one tool makes and the other
-doesn't, contrast stretched on one side only — is several levels, or a different size.
-
-## What it does not cover
-
-- The EPUB package (`content.opf`, navigation, page markup). Those are pinned by unit tests in
-  `crates/mangapress-core/src/ebook/`, whose expected values were generated by KCC's own
-  `buildOPF()`.
-- The cover, likewise pinned by unit tests against KCC's `Cover`.
-- Joining labelled spreads (`--spreads`). Unit tests pin the layout; it was compared once, by
-  hand, with the image KCC's own steps give for the same two pages — identical in both reading
-  directions.
-- Output containers: both sides are compared as decoded pixels, not as JPEG, GIF or PNG bytes.
-- Any device but the Kindle 11 profile (1072x1448), except the dither, which uses three.
-
-## Where mangapress differs on purpose
-
-Two things KCC does for the sake of Amazon's own converter and reader, which mangapress — made
-for books read in KOReader — leaves out. Neither can show up as a difference here. The complete
-list of deliberate differences, with the reasons, is in
-[ADR 0013](../../docs/adr/0013-follow-a-named-kcc-release.md).
-
-- A quantized page (`--forcepng`) is a GIF in KCC for a Kindle profile's EPUB. mangapress writes
-  a palette PNG on every device: the same pixels, in a smaller file.
-- A whole spread kept upright (`--norotate`) is capped at 1920x1920 in KCC for a Kindle profile's
-  EPUB. mangapress uses the rule KCC has for every other device — two screen widths by one screen
-  height — so that scenario runs on a Kobo profile of the same resolution.
+The comparison does not verify EPUB markup and navigation, covers, labelled-spread joining,
+or the encoded archive bytes. Relevant Rust tests cover those separately. See
+[ADR 0013](../../docs/adr/0013-follow-a-named-kcc-release.md) for deliberate differences, including
+PNG rather than GIF for quantized Kindle EPUB pages and the size of upright spreads.
 
 ## Files
 
-- `parity.py` — the scenarios, the comparison, the verdict.
-- `kcc_oracle.py` — drives KCC from a checkout. It imports KCC and calls it; nothing of KCC's is
-  copied here (see `docs/adr/0007-gplv3-boundary-kcc-image-rs.md`).
-- `make_corpus.py` — draws the built-in test pages.
-- `crates/mangapress-core/examples/parity_dump.rs` — the mangapress side: the real pipeline,
-  writing its pages where `parity.py` can read them.
+- [parity.py](parity.py): scenarios and comparisons.
+- [kcc_oracle.py](kcc_oracle.py): calls KCC from its checkout.
+- [make_corpus.py](make_corpus.py): generates the test images.
+- [parity_dump.rs](../../crates/mangapress-core/examples/parity_dump.rs): runs mangapress's pipeline
+  and writes pages for comparison.
 
-## When KCC changes
+The [licensing boundary](../../docs/adr/0007-gplv3-boundary-kcc-image-rs.md) applies here too.
 
-Check out the new tag and run this. Each difference it reports is either a change in KCC to follow
-— update the code, the tests, and `REFERENCE_KCC` in `parity.py` — or a deliberate difference to
-write down where the code makes it.
+## Updating the reference
+
+Run the comparison against the proposed KCC tag. Review each difference before changing the
+reference: follow the new behavior or record a deliberate difference in ADR 0013. Update the
+implementation, regression tests, and `REFERENCE_KCC` in `parity.py` together.

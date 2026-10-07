@@ -1,11 +1,8 @@
 # Fixtures
 
-Only synthetic or procedurally generated images belong here (checkerboards,
-gradients, random noise with known statistical properties, etc.) — never
-real manga/comic pages. This mirrors the rule already followed in
-[Mangabind](https://github.com/gustavommcv/mangabind): real copyrighted
-fixtures are useful for manual verification but must never be committed.
+Use small synthetic images, such as checkerboards, gradients, or noise with known properties.
+Keep fixtures reproducible and suited to the behavior being tested.
 
-If you need a real fixture to debug something locally, keep it under
-`tests/fixtures/real/` (gitignored) and describe how to reproduce a
-synthetic equivalent before submitting a PR that depends on it.
+Real manga or comic pages used for local investigation belong in the ignored `real/` folder.
+Do not commit them or make automated tests depend on them; reproduce the relevant properties
+with a synthetic fixture instead.

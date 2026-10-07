@@ -242,6 +242,11 @@ fn a_page_failure_has_chapter_page_stage_and_actionable_message() {
     assert_eq!(error["stage"], "process");
     assert_eq!(error["chapter"], "c001 - Broken");
     assert_eq!(error["page"], 1);
+    assert!(error["diagnostic"].as_str().unwrap().contains("p0001.png"));
+    assert!(error["diagnostic"]
+        .as_str()
+        .unwrap()
+        .contains("processing page 1"));
     assert_eq!(
         error["message"],
         "Couldn't process page 1 in chapter 'c001 - Broken'."

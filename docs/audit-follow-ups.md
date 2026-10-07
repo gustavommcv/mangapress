@@ -14,7 +14,7 @@ verified remote checks for the exact commit, as described in [CONTRIBUTING](../C
 | Distributed dependency license notices | 12 | In progress; target-specific source notices generated and checked for release archives |
 | CI and release checks | 13 | In progress; pinned tools/actions, locked checks, advisory checks, and shared release gates |
 | Installer checksums and version selection | 13 | In progress; version-pinned downloads, checksum checks, and installed license notices |
-| CLI diagnostics, help, and documentation | 8, 10, 15 | Not started |
+| CLI diagnostics, help, and documentation | 8, 10, 15 | In progress; quiet human pipe closure, source-page diagnostics, grouped help, and documented streams/exit codes |
 | Final pre-release parity review | Follow-up to 16 | Planned after the audit PRs, before the next release |
 
 Finding 18's failure-path tests accompany the relevant fixes. The allocator/distribution

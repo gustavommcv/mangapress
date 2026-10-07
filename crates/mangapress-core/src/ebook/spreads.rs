@@ -213,6 +213,9 @@ mod tests {
     #[test]
     fn a_right_to_left_pair_has_the_first_read_page_on_the_right() {
         let mut chapters = book(&[4]);
+        for (index, page) in chapters[0].pages.iter_mut().enumerate() {
+            page.source_path = Some(PathBuf::from(format!("page-{index}.png")));
+        }
         let outcome = join_labelled_spreads(&mut chapters, &[1], true).unwrap();
         assert_eq!(outcome.joined, [1]);
         assert_eq!(chapters[0].pages.len(), 3);
@@ -222,6 +225,18 @@ mod tests {
         // The pages around it are untouched and in order.
         assert_eq!(sides(&chapters[0].pages[0]), (0, 0));
         assert_eq!(sides(&chapters[0].pages[2]), (30, 30));
+        assert!(
+            chapters[0].pages[1].source_path.is_none(),
+            "a joined spread has two source images"
+        );
+        assert_eq!(
+            chapters[0].pages[0].source_path,
+            Some(PathBuf::from("page-0.png"))
+        );
+        assert_eq!(
+            chapters[0].pages[2].source_path,
+            Some(PathBuf::from("page-3.png"))
+        );
     }
 
     #[test]

@@ -255,6 +255,17 @@ fn pipeline_format(format: Format) -> OutputFormat {
     }
 }
 
+/// A human report may stop when its reader closes the pipe; other I/O failures remain errors.
+fn write_human_report<W: std::io::Write>(
+    writer: &mut W,
+    report: impl FnOnce(&mut W) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    match report(writer).and_then(|()| writer.flush()) {
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        result => result,
+    }
+}
+
 /// Processes every page of one chapter, fanning the work out across every
 /// core (pages within a chapter don't depend on each other) while
 /// preserving input order in the returned `Vec` regardless of which thread
@@ -289,7 +300,10 @@ fn process_chapter_pages(
                 process_page(&source_page.bytes, options, is_first_page).map_err(|error| {
                     PageProcessingFailure {
                         page: page_number,
-                        diagnostic: error.to_string(),
+                        diagnostic: match &source_page.source_path {
+                            Some(path) => format!("image {path:?}: {error}"),
+                            None => error.to_string(),
+                        },
                     }
                 })?;
             let mut progress = progress.lock().map_err(|_| PageProcessingFailure {
@@ -310,9 +324,10 @@ fn process_chapter_pages(
         .collect::<Result<Vec<_>, PageProcessingFailure>>()?;
 
     let mut flattened = Vec::with_capacity(pages.len());
-    for page_outputs in outputs {
+    for (source, page_outputs) in pages.iter().zip(outputs) {
         for (piece, page) in page_outputs.into_iter().enumerate() {
             flattened.push(Page {
+                source_path: source.source_path.clone(),
                 extension: page.extension,
                 bytes: page.bytes,
                 black_background: page.black_background,
@@ -392,11 +407,6 @@ fn run<W: std::io::Write + Send>(
     failure: &mut RunFailure,
 ) -> anyhow::Result<()> {
     if cli.list_profiles {
-        // `writeln!` + break-on-error, not `println!`, because `println!`
-        // panics on a write failure -- including the very ordinary
-        // `mangapress --list-profiles | head` closing its end of the pipe
-        // early. Piping a listing into `head`/`grep`/`less` should just
-        // stop quietly, like it does for any real Unix tool.
         if events.enabled() {
             for profile in mangapress_core::profile::PROFILES {
                 events
@@ -424,18 +434,17 @@ fn run<W: std::io::Write + Send>(
                 )
                 .map_err(event_write_failure)?;
         } else {
-            let mut stdout = std::io::stdout().lock();
-            for p in mangapress_core::profile::PROFILES {
-                if writeln!(
-                    stdout,
-                    "{:<10} {:<40} {}x{}",
-                    p.code, p.display_name, p.width, p.height
-                )
-                .is_err()
-                {
-                    break;
+            write_human_report(&mut std::io::stdout().lock(), |stdout| {
+                for p in mangapress_core::profile::PROFILES {
+                    writeln!(
+                        stdout,
+                        "{:<10} {:<40} {}x{}",
+                        p.code, p.display_name, p.width, p.height
+                    )?;
                 }
-            }
+                Ok(())
+            })
+            .context("writing the profile list")?;
         }
         return Ok(());
     }
@@ -1022,13 +1031,23 @@ fn run<W: std::io::Write + Send>(
                 )
                 .map_err(event_write_failure)?;
         } else {
-            println!("dry run -- no pages will be processed, nothing will be written");
-            println!("title: {title}");
-            println!("author: {author}");
-            println!("format: {:?}", cli.format);
-            println!("device: {} ({width}x{height})", profile.display_name);
-            println!("chapters: {total_chapters}, pages: {total_pages}");
-            println!("would write: {}", output_path.display());
+            write_human_report(&mut std::io::stdout().lock(), |stdout| {
+                writeln!(
+                    stdout,
+                    "dry run -- no pages will be processed, nothing will be written"
+                )?;
+                writeln!(stdout, "title: {title}")?;
+                writeln!(stdout, "author: {author}")?;
+                writeln!(stdout, "format: {format}")?;
+                writeln!(
+                    stdout,
+                    "device: {} ({width}x{height})",
+                    profile.display_name
+                )?;
+                writeln!(stdout, "chapters: {total_chapters}, pages: {total_pages}")?;
+                writeln!(stdout, "would write: {}", output_path.display())
+            })
+            .context("writing the dry-run summary")?;
         }
         return Ok(());
     }
@@ -1216,10 +1235,7 @@ fn run<W: std::io::Write + Send>(
                 .with_chapter(chapter_title.clone())
                 .with_page(error.page)
                 .with_path(input_path.clone());
-                bail!(
-                    "processing a page in chapter '{chapter_title}': {}",
-                    error.diagnostic
-                );
+                bail!("{}", failure.diagnostic);
             }
         };
 
@@ -1481,6 +1497,53 @@ fn run<W: std::io::Write + Send>(
 mod tests {
     use super::*;
 
+    struct FailingWriter {
+        kind: std::io::ErrorKind,
+        fail_on_flush: bool,
+    }
+
+    impl std::io::Write for FailingWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.fail_on_flush {
+                Ok(bytes.len())
+            } else {
+                Err(self.kind.into())
+            }
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            if self.fail_on_flush {
+                Err(self.kind.into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn human_reports_ignore_only_broken_pipe_including_flush_failures() {
+        for kind in [
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::PermissionDenied,
+        ] {
+            for fail_on_flush in [false, true] {
+                let mut writer = FailingWriter {
+                    kind,
+                    fail_on_flush,
+                };
+                let result = write_human_report(&mut writer, |out| writeln!(out, "report"));
+                if kind == std::io::ErrorKind::BrokenPipe {
+                    assert!(result.is_ok());
+                } else {
+                    assert_eq!(result.unwrap_err().kind(), kind);
+                }
+            }
+        }
+        let mut output = Vec::new();
+        write_human_report(&mut output, |out| writeln!(out, "report")).unwrap();
+        assert_eq!(output, b"report\n");
+    }
+
     #[test]
     fn automatic_format_follows_the_device_family() {
         let format = |code: &str| automatic_format(Profile::by_code(code).unwrap());
@@ -1703,7 +1766,9 @@ mod tests {
         let gray_levels = [10u8, 60, 110, 160, 210];
         let pages: Vec<Page> = gray_levels
             .iter()
-            .map(|&g| Page {
+            .enumerate()
+            .map(|(index, &g)| Page {
+                source_path: Some(PathBuf::from(format!("page-{index}.png"))),
                 extension: "png".to_string(),
                 bytes: solid_gray_png(40, g),
                 ..Default::default()
@@ -1713,6 +1778,9 @@ mod tests {
         let options = minimal_pipeline_options();
         let processed = process_chapter_pages(&pages, &options, false, |_, _| Ok(())).unwrap();
         assert_eq!(processed.len(), gray_levels.len());
+        for (source, result) in pages.iter().zip(&processed) {
+            assert_eq!(result.source_path, source.source_path);
+        }
 
         let output_grays: Vec<u8> = processed
             .iter()

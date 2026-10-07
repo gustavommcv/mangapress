@@ -206,6 +206,28 @@ The [protocol reference](docs/machine-protocol-v1.md) defines the events and com
 Use the handshake's `protocol_version` to check compatibility. A successful stream ends with a
 `result` event; page progress alone does not mean the book has been saved.
 
+## Terminal output and exit codes
+
+Routine progress, warnings, and errors go to stderr. Help, version information, profile lists,
+and dry-run summaries go to stdout; conversion writes the book to disk, not to stdout.
+`--quiet` suppresses routine progress, but keeps warnings and errors visible.
+With `--json-events`, stdout contains only JSON Lines and ordinary progress is suppressed;
+stderr may still carry diagnostics when a command fails. Help and version requests remain
+human-readable even if `--json-events` is also passed.
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Success, including help, version, profile listings, and dry-run plans. |
+| `1` | Runtime failure: configuration, input, conversion, output, or the JSON event stream. |
+| `2` | Invalid command-line arguments. |
+
+Human profile lists and dry-run summaries stop quietly if the reader of a pipe closes early.
+Other output errors remain failures. A closed JSON stream also fails: consumers must not
+assume success without receiving the final `result` event.
+
+A failed page reports its chapter, one-based position, and original image filename when
+available. Pages generated from several images may not have a single original filename.
+
 ## Contributing and credits
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development, tests, and reporting bugs.

@@ -21,6 +21,9 @@ use std::path::PathBuf;
 /// processed it — what the EPUB builder needs to present it as upstream does.
 #[derive(Debug, Clone, Default)]
 pub struct Page {
+    /// Original image path relative to the input root, for diagnostics.
+    /// Generated pages without a single source image leave this unset.
+    pub source_path: Option<PathBuf>,
     /// Lowercase, no leading dot (e.g. `"jpg"`, `"png"`).
     pub extension: String,
     pub bytes: Vec<u8>,
@@ -84,6 +87,7 @@ pub fn group_into_chapters(entries: Vec<SourceEntry>) -> Vec<Chapter> {
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default();
         let page = Page {
+            source_path: Some(entry.relative_path),
             extension,
             bytes: entry.bytes,
             ..Default::default()
@@ -135,6 +139,10 @@ mod tests {
         assert_eq!(chapters[0].pages.len(), 2);
         assert_eq!(chapters[0].pages[0].extension, "jpg");
         assert_eq!(chapters[0].pages[1].extension, "png");
+        assert_eq!(
+            chapters[0].pages[1].source_path.as_deref(),
+            Some(Path::new("c001 - Title One/p0002.png"))
+        );
         assert_eq!(chapters[1].title, "c002 - Title Two");
         assert_eq!(chapters[1].pages.len(), 1);
     }

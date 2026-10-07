@@ -8,7 +8,7 @@
 6. ~~[Defer MOBI/AZW3 output](0006-mobi-azw3-deferred.md)~~ — superseded by 8
 7. [Treat KCC's `image.py` and `dualmetafix.py` as specification, not source to port](0007-gplv3-boundary-kcc-image-rs.md)
 8. [MOBI/AZW3 is permanently out of scope](0008-mobi-azw3-permanently-out-of-scope.md)
-9. [Adopt relevant CLI conventions from clig.dev](0009-cli-conventions.md)
+9. [Adopt relevant CLI conventions from clig.dev](0009-cli-conventions.md) — machine output updated by 11; output safety updated by 16
 10. ~~[Defer color (`--forcecolor`) output](0010-color-output-deferred.md)~~ — superseded: color output is implemented
 11. [Add a versioned JSON Lines event stream](0011-versioned-json-lines-events.md)
 12. [A two-level table of contents for a combined series, EPUB only](0012-nested-toc-for-combined-volumes.md)

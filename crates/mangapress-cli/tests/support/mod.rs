@@ -20,6 +20,19 @@ pub fn parse_events(output: &Output) -> Vec<Value> {
         assert_eq!(event["sequence"], index + 1);
         assert!(event["tool_version"].is_string());
         assert!(event["type"].is_string());
+        if matches!(event["type"].as_str(), Some("warning" | "error")) {
+            let code = event["code"].as_str().expect("issues must carry a code");
+            let reference = include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../docs/machine-protocol-v1.md"
+            ));
+            assert!(
+                reference
+                    .lines()
+                    .any(|line| line.starts_with(&format!("| `{code}` |"))),
+                "issue code {code} must be documented in the protocol reference"
+            );
+        }
     }
     events
 }

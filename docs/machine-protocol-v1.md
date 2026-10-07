@@ -105,6 +105,7 @@ Version 1 issue codes are:
 |---|---|---|
 | `invalid_arguments` | `configuration` | clap rejected the invocation |
 | `unknown_profile` | `configuration` | The requested profile does not exist |
+| `nested_toc_unsupported_format` | `configuration` | Nested volume/chapter navigation was requested with a format other than EPUB |
 | `invalid_resolution` | `configuration` | The effective target width or height is zero |
 | `input_not_found` | `inspect` | The input path does not exist |
 | `input_read_failed` | `inspect` | The folder or CBZ could not be read |
@@ -130,6 +131,15 @@ Version 1 issue codes are:
 | `book_build_failed` | `package` | EPUB, CBZ, or PDF assembly failed |
 | `output_write_failed` | `write` | The completed bytes could not be saved |
 | `event_write_failed` | `protocol` | The JSON Lines stream itself could not be written |
+
+Page-processing diagnostics include the one-based page position and, when available, the
+original image's relative path. Joined spreads and generated webtoon pages do not have a
+single original filename. The error's `path` continues to identify the input book, not the
+image mentioned in `diagnostic`.
+
+If stdout closes or a JSON event cannot be written, the process fails with exit code 1; a
+complete final error event may itself be impossible to emit. This differs from human profile
+lists and dry-run summaries, which stop quietly when a pipe's reader closes early.
 
 ## Evolution rule
 

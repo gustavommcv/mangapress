@@ -6,14 +6,17 @@ synthetic input or a description of the page layout is preferable to uploading m
 
 ## Setup and checks
 
-Use a stable Rust toolchain with rustfmt and Clippy, as in [CI](.github/workflows/ci.yml).
+Use Rust 1.98.1 with rustfmt and Clippy, as selected by
+[rust-toolchain.toml](rust-toolchain.toml) and used in [CI](.github/workflows/ci.yml).
+With rustup installed, run `rustup toolchain install --no-self-update` from the checkout.
+This is also the declared minimum; compatibility with older compilers has not been tested.
 From the repository root:
 
 ```sh
 cargo build --workspace --locked
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 ```
 
 Use `cargo fmt --all` to apply formatting. To run the CLI from the checkout:
@@ -63,6 +66,11 @@ Keep each PR focused and explain the change and its verification. Write code com
 documentation, commit messages, and PR descriptions in English. Check instructions against the
 current CLI and workflows. Preserve accepted ADRs and audit evidence; record a changed decision
 in a new ADR when it needs one.
+
+CI also runs pinned cargo-audit and actionlint tools. Security advisories are fetched on each
+run, not frozen with the compiler. Review findings rather than adding blanket ignores.
+For workflow changes, check the [release gates](docs/releases.md) too. Update action SHAs
+only after reviewing the upstream release and verifying all affected remote workflows.
 
 Before merging, verify the remote checks for the exact PR commit and wait for the maintainer's
 approval. Passing local checks does not replace a successful remote run. If the run cannot be

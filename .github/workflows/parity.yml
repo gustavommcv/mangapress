@@ -7,6 +7,7 @@ on:
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'rust-toolchain.toml'
       - 'tools/parity/**'
       - '.github/workflows/parity.yml'
   pull_request:
@@ -14,9 +15,11 @@ on:
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'rust-toolchain.toml'
       - 'tools/parity/**'
       - '.github/workflows/parity.yml'
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -27,10 +30,14 @@ jobs:
     env:
       PYTHONUNBUFFERED: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install the repository toolchain
+        run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
           cache: pip
@@ -40,11 +47,12 @@ jobs:
       - name: Check comparison bookkeeping
         run: python -m unittest discover -s tools/parity -p 'test_*.py' -v
       - name: Check out the reference KCC release
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ciromattia/kcc
           ref: f127adbca992456e173d88ada18643eae66802fb # v12.0.0
           path: target/kcc-reference
+          persist-credentials: false
       - name: Compare the full Kindle 11 matrix
         run: python tools/parity/parity.py --kcc target/kcc-reference --work target/parity/K11
       - name: Compare representative device profiles

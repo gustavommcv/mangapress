@@ -2,6 +2,7 @@
 name = "mangapress-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Manga/comic e-ink conversion pipeline: device profiles, image processing, and EPUB/CBZ/PDF generation."

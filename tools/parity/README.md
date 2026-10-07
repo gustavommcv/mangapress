@@ -89,6 +89,8 @@ It runs on Linux and supplements, rather than replaces, the three-platform Rust 
 no schedule or latest-release monitor. `workflow_dispatch` also permits a manual run; reviewing
 a new KCC release remains the contributor's responsibility below. Generated images and KCC's
 checkout stay under ignored `target/` and are not shipped in the application.
+The release workflow also calls this comparison on each tagged commit before packaging.
+Changing `rust-toolchain.toml` triggers the PR/main comparison as well.
 
 ## Files
 

@@ -12,7 +12,7 @@ verified remote checks for the exact commit, as described in [CONTRIBUTING](../C
 | Kindle DX and broader parity coverage | 7, 16 | In progress; format-specific target and [multi-profile comparison](../tools/parity/README.md) |
 | Dependency cleanup | 11 | In progress; unused crates removed and image codecs restricted to the supported page formats |
 | Distributed dependency license notices | 12 | In progress; target-specific source notices generated and checked for release archives |
-| CI and release checks | 13 | Not started |
+| CI and release checks | 13 | In progress; pinned tools/actions, locked checks, advisory checks, and shared release gates |
 | Installer checksums and version selection | 13 | Not started |
 | CLI diagnostics, help, and documentation | 8, 10, 15 | Not started |
 | Final pre-release parity review | Follow-up to 16 | Planned after the audit PRs, before the next release |
@@ -64,6 +64,18 @@ The original KCC/Pillow notices and mangapress's own license remain unchanged.
 The installer follow-up must also preserve these files after extraction: Windows already
 keeps archive contents, but the Unix installer currently moves only the executable.
 Do not consider that installation path covered by archive generation alone.
+
+## CI and release scope
+
+Pin Rust 1.98.1 in the repository toolchain file and inherit that tested minimum in both
+packages. Pin external actions by commit, use locked Clippy/tests, and run cargo-audit
+against the current RustSec database. actionlint checks workflow syntax; regression tests
+cover mismatched release tags. The tag workflow requires a matching Cargo version and a
+commit merged into `main`, then reuses CI and KCC parity before packaging or publication.
+
+Repository protection and update bots remain owner decisions, not changes silently made
+through the API. No signing, SBOM, provenance, new platform, or scheduled comparison is
+added. See [release checks](releases.md) and the [security policy](../SECURITY.md).
 
 ## Final pre-release parity review
 

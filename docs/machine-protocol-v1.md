@@ -71,6 +71,13 @@ human `--list-profiles`, followed by a result. A profile contains code, display 
 gray levels, and family. `OTHER` legitimately reports a zero built-in resolution and requires CLI
 width/height overrides when used for conversion.
 
+Profile events report built-in dimensions, not a format-specific target. Plan-stage and
+conversion-result `width`/`height` fields report the effective processing resolution. For
+`KDX` CBZ output, that is 824 × 1200 unless either custom dimension is set; its profile event
+still reports 824 × 1000. EPUB/PDF retain the built-in dimensions, as in KCC 12.0.0.
+An unmodified Scribe EPUB caps its target width at 1920; CBZ/PDF and custom dimensions
+do not. Its EPUB `original-resolution` metadata uses the effective target as well.
+
 ## Issues
 
 Book inspection filters non-image payloads before reading them, while retaining root-level

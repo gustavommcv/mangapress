@@ -1,0 +1,5 @@
+# Development-only dependencies for the pinned KCC comparison.
+Pillow==12.3.0
+numpy==2.5.2
+packaging==26.0
+psutil==7.2.2

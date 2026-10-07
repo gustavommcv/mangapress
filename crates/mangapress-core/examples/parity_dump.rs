@@ -35,8 +35,9 @@ fn main() {
     let webtoon = flag("--webtoon");
     let options = PipelineOptions {
         profile: Profile::by_code(profile).expect("a known profile code"),
-        width_override: None,
-        height_override: None,
+        width_override: value("--customwidth").map(|v| v.parse().expect("--customwidth=<number>")),
+        height_override: value("--customheight")
+            .map(|v| v.parse().expect("--customheight=<number>")),
         // Upstream's webtoon mode forces these four; see the CLI.
         manga_style: flag("--manga") && !webtoon,
         cropping: match value("--crop") {

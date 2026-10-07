@@ -6,10 +6,12 @@ separately from `cargo test`.
 
 ## Run the comparison
 
-You need a Rust toolchain and Python 3 with Pillow and NumPy. From the mangapress repository
-root, clone the reference release into a separate folder:
+You need a Rust toolchain and Python 3. From the mangapress repository root, install the
+development-only comparison dependencies and clone the reference into a separate folder.
+Use a virtual environment if you do not want to change your Python installation:
 
 ```sh
+python -m pip install -r tools/parity/requirements.txt
 git clone --depth 1 --branch v12.0.0 https://github.com/ciromattia/kcc ../kcc-reference
 python tools/parity/parity.py --kcc ../kcc-reference
 ```
@@ -17,12 +19,30 @@ python tools/parity/parity.py --kcc ../kcc-reference
 The driver supplies substitutes for KCC imports that the comparison does not use, so the full
 KCC dependency set is not required. A failing comparison lists differences and exits nonzero.
 
-- `--only TEXT` runs scenarios whose names contain the text.
+- `--profile CODE` selects a built-in device profile; the default is `K11`.
+- `--smoke` runs three representative scenarios: default processing, CBZ padding, and color
+  output. It excludes the full matrix and exact dither/webtoon checks.
+- `--only TEXT` runs scenarios whose names contain the text. Repeat it to select a union.
+  A filter matching nothing fails; `--only dither` generates its reference pages even in a
+  fresh work folder. It cannot be combined with `--smoke`.
 - `--pages DIR` adds your own pages to the default and color-output scenarios.
 - `--work DIR` changes the output folder; the default is the ignored `target/parity/`.
 
 Inspect the generated PNGs from both tools when investigating a difference. Keep private pages
 outside the repository; the built-in corpus uses generated images.
+
+For example, check the DX's CBZ behavior or run the small matrix on a Kobo:
+
+```sh
+python tools/parity/parity.py --kcc ../kcc-reference --profile KDX --only CBZ --work target/parity/KDX
+python tools/parity/parity.py --kcc ../kcc-reference --profile KoLC --smoke --work target/parity/KoLC
+```
+
+Use a separate `--work` folder for simultaneous runs. To check the driver's own bookkeeping:
+
+```sh
+python -m unittest discover -s tools/parity -p "test_*.py" -v
+```
 
 ## What is checked
 
@@ -41,13 +61,32 @@ applies to the tested scenarios; it is not a guarantee for every image, option, 
 
 ## Limits
 
-The main scenarios use Kindle 11 (`K11`, 1072 × 1448). The upright-spread scenario uses a Kobo
-profile at the same resolution to account for a deliberate difference from KCC.
+The main scenarios use the selected profile. Four explicitly labelled custom-resolution
+regressions always use `KDX` or `KS3`. The upright-spread scenario always uses `KoC` (1072 × 1448),
+matching the original Kindle 11 baseline without KCC's deliberate Kindle EPUB cap. These
+fixed-profile cases are labelled with their actual code in the output.
+
+Webtoon checks use the selected profile's built-in dimensions. The exact dither check still
+exercises all three palettes (`K11`, `K2`, `K1`), independently of the selected device.
 
 The comparison does not verify EPUB markup and navigation, covers, labelled-spread joining,
 or the encoded archive bytes. Relevant Rust tests cover those separately. See
 [ADR 0013](../../docs/adr/0013-follow-a-named-kcc-release.md) for deliberate differences, including
 PNG rather than GIF for quantized Kindle EPUB pages and the size of upright spreads.
+
+## Automatic checks
+
+[KCC parity](../../.github/workflows/parity.yml) runs on pull requests and pushes to `main`
+that change the crates, Cargo manifests/lockfile, comparison tools, or that workflow. It uses
+KCC 12.0.0 at commit `f127adbca992456e173d88ada18643eae66802fb` and the dependency versions in
+`requirements.txt`: the full Kindle 11 matrix, including the DX and Scribe custom-resolution regressions,
+then smoke checks for `K1`, `K2`, `KDX`, `KS3`, `KCS`, `KoLC`, and `RmkPPMove`. This spans all
+three grayscale palettes, old Kindle defaults, large screens, color devices, and each family.
+
+It runs on Linux and supplements, rather than replaces, the three-platform Rust CI. There is
+no schedule or latest-release monitor. `workflow_dispatch` also permits a manual run; reviewing
+a new KCC release remains the contributor's responsibility below. Generated images and KCC's
+checkout stay under ignored `target/` and are not shipped in the application.
 
 ## Files
 

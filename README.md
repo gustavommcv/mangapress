@@ -96,6 +96,12 @@ guarantee future write permissions or free space. A real run checks write access
 processing, then stages and synchronizes the completed book before publishing it. Run
 `mangapress --help` for the full list of options and defaults.
 
+The Kindle DX/DXG profile keeps its built-in 824 × 1000 size in `--list-profiles`. For CBZ
+output (including `auto`), it targets 824 × 1200, as KCC 12.0.0 does. Setting either custom
+dimension disables that special case; EPUB and PDF retain the built-in size.
+Unmodified Scribe profiles cap the EPUB target width at 1920, also following KCC;
+CBZ/PDF and custom dimensions retain their full resolution.
+
 One input file or uncompressed CBZ entry is limited to 256 MiB; this is not a limit on the
 whole book. Oversized images are checked before pixel decoding. See
 [input limits](docs/adr/0015-bounded-input-reads.md) for the KCC thresholds and memory limitations.

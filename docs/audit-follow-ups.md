@@ -9,7 +9,7 @@ verified remote checks for the exact commit, as described in [CONTRIBUTING](../C
 | Bounded input reads and image checks | 1, 2 | In progress; policy in [ADR 0015](adr/0015-bounded-input-reads.md) |
 | Output names, validation, and atomic writes | 3–6 | In progress; policy in [ADR 0016](adr/0016-safe-output-planning-and-publication.md) |
 | Symbolic-link policy | 9 | In progress; approved containment policy in [ADR 0017](adr/0017-folder-links-stay-inside-the-input.md) |
-| Kindle DX and broader parity coverage | 7, 16 | Not started |
+| Kindle DX and broader parity coverage | 7, 16 | In progress; format-specific target and [multi-profile comparison](../tools/parity/README.md) |
 | Dependency cleanup | 11 | Not started |
 | Distributed dependency license notices | 12 | Not started |
 | CI and release checks | 13 | Not started |
@@ -18,6 +18,21 @@ verified remote checks for the exact commit, as described in [CONTRIBUTING](../C
 
 Finding 18's failure-path tests accompany the relevant fixes. The allocator/distribution
 benchmark (14) and the large orchestration refactor (17) are deferred, not resolved.
+The parity follow-up runs on relevant PRs/main changes. A schedule and latest-KCC-release
+monitor are not part of this change; new reference releases still require manual review.
+
+## Additional Scribe difference found during the follow-up
+
+The initial `KS3` smoke check passed default processing and CBZ padding, but failed color output
+on a rotated spread: KCC 12.0.0 produced 1920 × 2604 pixels, mangapress 1952 × 2648.
+KCC's `checkOptions()` caps the width of an unmodified Scribe profile at 1920 for its
+Kindle EPUB/MOBI path. Mangapress had used the full built-in width; this was an unintentional
+difference, not one of ADR 0013's accepted exceptions.
+
+The maintainer chose to reproduce the cap for EPUB. The shared target resolver and
+EPUB metadata now use it; CBZ/PDF and custom dimensions keep their full target. Tests
+cover both `KS3` and `KSCS`. This is a compatibility fix under ADR 0013, not a new
+deliberate difference. The original audit remains unchanged.
 
 ## Clarification of finding 2
 

@@ -41,8 +41,10 @@ synthetic; see [tests/fixtures/README.md](tests/fixtures/README.md). Real pages 
 a problem belong in the ignored `tests/fixtures/real/` folder and must not be committed.
 
 For changes that affect processed pixels, also run the [KCC comparison](tools/parity/README.md).
-It requires Python with Pillow and NumPy and a separate KCC checkout. It supplements Rust tests
-and covers only its listed scenarios and profiles.
+Install its small Python dependency set and provide a separate KCC checkout, as described there.
+It supplements Rust tests and covers only its listed scenarios and profiles. The comparison
+workflow runs the full Kindle 11 matrix and representative device checks for relevant PRs;
+verify that run for the exact commit as well as the three-platform Rust CI.
 
 KCC 12.0.0 is the current reference. Preserve the implementation and licensing boundary in
 [ADR 0007](docs/adr/0007-gplv3-boundary-kcc-image-rs.md), and follow

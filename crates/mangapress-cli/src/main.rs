@@ -246,6 +246,15 @@ fn format_name(format: Format) -> &'static str {
     }
 }
 
+fn pipeline_format(format: Format) -> OutputFormat {
+    match format {
+        Format::Auto => unreachable!("--format auto is resolved before processing configuration"),
+        Format::Epub => OutputFormat::Epub,
+        Format::Cbz => OutputFormat::Cbz,
+        Format::Pdf => OutputFormat::Pdf,
+    }
+}
+
 /// Processes every page of one chapter, fanning the work out across every
 /// core (pages within a chapter don't depend on each other) while
 /// preserving input order in the returned `Vec` regardless of which thread
@@ -469,7 +478,14 @@ fn run<W: std::io::Write + Send>(
         bail!("input path does not exist: {}", input.display());
     }
 
-    let (width, height) = profile.effective_resolution(cli.customwidth, cli.customheight);
+    let mut cli = cli;
+    if cli.format == Format::Auto {
+        cli.format = automatic_format(profile);
+    }
+    let cli = cli;
+    let output_format = pipeline_format(cli.format);
+    let (width, height) =
+        output_format.target_resolution(profile, cli.customwidth, cli.customheight);
     if width == 0 || height == 0 {
         *failure = RunFailure::new(
             "invalid_resolution",
@@ -487,12 +503,6 @@ fn run<W: std::io::Write + Send>(
             cli.profile
         );
     }
-
-    let mut cli = cli;
-    if cli.format == Format::Auto {
-        cli.format = automatic_format(profile);
-    }
-    let cli = cli;
 
     if cli.nested_toc && cli.format != Format::Epub {
         *failure = RunFailure::new(
@@ -685,7 +695,7 @@ fn run<W: std::io::Write + Send>(
     }
 
     // Upstream's two warnings about what it was given. Neither stops the run.
-    let device = profile.effective_resolution(cli.customwidth, cli.customheight);
+    let device = (width, height);
     let (smaller, measured) =
         mangapress_core::archive::smaller_than_device(&source_entries, device);
     let mut input_warnings: Vec<(&str, String)> = Vec::new();
@@ -1027,7 +1037,6 @@ fn run<W: std::io::Write + Send>(
     // joined and cut again before anything else happens to them, so the
     // page count from here on is the cut pages'.
     let (source_chapters, total_pages) = if cli.webtoon {
-        let device = profile.effective_resolution(cli.customwidth, cli.customheight);
         let mut chapters = source_chapters;
         for chapter in &mut chapters {
             let sources: Vec<&[u8]> = chapter
@@ -1111,12 +1120,7 @@ fn run<W: std::io::Write + Send>(
         no_processing: cli.noprocessing,
         rotate_right: cli.rotateright,
         force_png: cli.forcepng,
-        output_format: match cli.format {
-            Format::Auto => unreachable!("--format auto was resolved above"),
-            Format::Epub => OutputFormat::Epub,
-            Format::Cbz => OutputFormat::Cbz,
-            Format::Pdf => OutputFormat::Pdf,
-        },
+        output_format,
         gamma: cli.gamma,
         autolevel: cli.autolevel,
         noautocontrast: cli.noautocontrast,
@@ -1342,13 +1346,13 @@ fn run<W: std::io::Write + Send>(
                 nested_toc: cli.nested_toc,
                 kindle: profile.family() == Family::Kindle,
                 // Upstream's Kindle fixed-layout block is for a Kindle
-                // profile at its own resolution; overriding either
+                // profile at its format-specific target; overriding either
                 // dimension makes it upstream's "Custom" profile, which
                 // gets none.
                 kindle_resolution: (profile.family() == Family::Kindle
                     && cli.customwidth.unwrap_or(0) == 0
                     && cli.customheight.unwrap_or(0) == 0)
-                    .then_some((profile.width, profile.height)),
+                    .then_some((width, height)),
                 invert_direction: cli.invertdirection,
                 spread_shift: cli.spreadshift,
                 one_page_landscape: cli.onepagelandscape,

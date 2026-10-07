@@ -66,7 +66,8 @@ regressions always use `KDX` or `KS3`. The upright-spread scenario always uses `
 matching the original Kindle 11 baseline without KCC's deliberate Kindle EPUB cap. These
 fixed-profile cases are labelled with their actual code in the output.
 
-Webtoon checks use the selected profile's built-in dimensions. The exact dither check still
+Webtoon checks use the selected profile's effective EPUB target, obtained from KCC's own
+option resolver, including the Scribe width cap. The exact dither check still
 exercises all three palettes (`K11`, `K2`, `K1`), independently of the selected device.
 
 The comparison does not verify EPUB markup and navigation, covers, labelled-spread joining,
@@ -82,6 +83,7 @@ KCC 12.0.0 at commit `f127adbca992456e173d88ada18643eae66802fb` and the dependen
 `requirements.txt`: the full Kindle 11 matrix, including the DX and Scribe custom-resolution regressions,
 then smoke checks for `K1`, `K2`, `KDX`, `KS3`, `KCS`, `KoLC`, and `RmkPPMove`. This spans all
 three grayscale palettes, old Kindle defaults, large screens, color devices, and each family.
+A separate `KS3` webtoon check also exercises its format-specific target.
 
 It runs on Linux and supplements, rather than replaces, the three-platform Rust CI. There is
 no schedule or latest-release monitor. `workflow_dispatch` also permits a manual run; reviewing

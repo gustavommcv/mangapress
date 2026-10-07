@@ -52,3 +52,5 @@ jobs:
           for profile in K1 K2 KDX KS3 KCS KoLC RmkPPMove; do
             python tools/parity/parity.py --kcc target/kcc-reference --profile "$profile" --smoke --work "target/parity/$profile"
           done
+      - name: Compare Scribe webtoon processing
+        run: python tools/parity/parity.py --kcc target/kcc-reference --profile KS3 --only webtoon --work target/parity/KS3-webtoon

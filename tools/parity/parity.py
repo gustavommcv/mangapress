@@ -218,7 +218,7 @@ def main():
     kcc = os.path.abspath(args.kcc)
     if not os.path.isfile(os.path.join(kcc, "kindlecomicconverter", "image.py")):
         raise SystemExit(f"{kcc} doesn't look like a KCC checkout")
-    version, _, _, kcc_image = load_kcc(kcc)
+    version, kcc_cli, _, kcc_image = load_kcc(kcc)
     profile_data = kcc_image.ProfileData.Profiles.get(args.profile)
     if not profile_data or not all(profile_data[1]):
         parser.error(f"{args.profile!r} is not a device profile with a built-in resolution")
@@ -295,7 +295,10 @@ def main():
             print(f"  {'ok  ' if not differing else 'FAIL'} dither to {len(levels):2d} levels, same input{'':24s} {len(grays):3d} pages, {differing} pixels differ")
 
     if check_webtoon:
-        width, height = profile_data[1]
+        # The table is not always the processing target (e.g. Scribe EPUB).
+        webtoon_options = kcc_cli.checkOptions(kcc_cli.makeParser().parse_args(
+            ["-p", args.profile, "-w", "-f", "EPUB", "unused-input"]))
+        width, height = webtoon_options.profileData[1]
         for name, chapter in corpus["webtoon"].items():
             kcc_dir, dump_dir = os.path.join(work, f"{name}_kcc"), os.path.join(work, f"{name}_mangapress")
             run(oracle + [kcc_dir, "--webtoon-dir", chapter, str(width), str(height)])

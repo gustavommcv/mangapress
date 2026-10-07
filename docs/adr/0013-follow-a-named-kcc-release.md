@@ -69,6 +69,7 @@ deliberate, and is also written down where the code makes it:
 | `--format auto` gives a Kindle EPUB | KCC goes on to MOBI. |
 | Only `.cbz` and folders are read | CBR, CB7, PDF and EPUB input need external tools or large libraries; one binary with nothing else to install is the point of this project (ADR 0001, 0002). |
 | One input file or uncompressed archive entry is limited to 256 MiB | Bounds an individual read; not a book-size limit. The pixel-area check retains KCC's larger page limit (ADR 0015). |
+| Folder links are followed only to regular files inside the selected input; rejected links produce warnings | Prevents unintended inclusion of external images and directory cycles. The selected root may itself be a link (ADR 0017). |
 | Chapters are keyed by their full path | Fixes a title collision in KCC (ADR 0005). |
 | A cover in the `Covers` folder can be matched by name; `Covers` is not counted as a book | Position alone hands a book without a cover its neighbor's, and KCC counts the folder itself when the input is a folder. |
 | An existing output is preserved with `… (mangapress)`, then numbered suffixes; `.kepub.epub` stays intact | KCC's non-overwriting rule, under this tool's name, without duplicating the compound extension (ADR 0016). |

@@ -72,6 +72,10 @@ Missing output folders are created automatically. Input can be a CBZ, a folder
 of images, or a folder containing chapter subfolders. CBR, CB7, EPUB, and PDF input are not
 supported.
 
+Inside folder input, symbolic links are followed only to regular files within that folder.
+External, broken, and directory links are skipped with a warning, including on `--dry-run`.
+If you intentionally use external links, copy their files into the input instead.
+
 Use `--output` for a file or directory. Without it, output is written beside the input; a Kobo
 profile's EPUB uses the `.kepub.epub` extension. Add `--nokepub` for a plain `.epub`.
 Derived filenames follow the source, not the book title; folders keep dots in their names.

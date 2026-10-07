@@ -549,9 +549,33 @@ fn run<W: std::io::Write + Send>(
     .with_path(input_path.clone());
     let book_input =
         read_book(&input).with_context(|| format!("reading input from {}", input.display()))?;
+    for link in &book_input.skipped_links {
+        let path = absolute_display(&input.join(&link.relative_path));
+        let message = format!("Skipped a symbolic link because {}.", link.reason);
+        if events.enabled() {
+            events
+                .emit(
+                    "warning",
+                    json!({
+                        "severity": "warning",
+                        "code": "link_skipped",
+                        "stage": "inspect",
+                        "path": path,
+                        "recoverable": true,
+                        "message": message,
+                    }),
+                )
+                .map_err(event_write_failure)?;
+        } else {
+            eprintln!("warning: {message} Link: {path:?}");
+        }
+    }
     let mut source_entries = book_input.entries;
 
-    if source_entries.is_empty() && book_input.skipped_non_images == 0 {
+    if source_entries.is_empty()
+        && book_input.skipped_non_images == 0
+        && book_input.skipped_links.is_empty()
+    {
         *failure = RunFailure::new(
             "input_empty",
             "inspect",

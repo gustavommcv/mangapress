@@ -8,7 +8,7 @@ verified remote checks for the exact commit, as described in [CONTRIBUTING](../C
 | --- | --- | --- |
 | Bounded input reads and image checks | 1, 2 | In progress; policy in [ADR 0015](adr/0015-bounded-input-reads.md) |
 | Output names, validation, and atomic writes | 3–6 | In progress; policy in [ADR 0016](adr/0016-safe-output-planning-and-publication.md) |
-| Symbolic-link policy | 9 | Not started; maintainer decision before implementation |
+| Symbolic-link policy | 9 | In progress; approved containment policy in [ADR 0017](adr/0017-folder-links-stay-inside-the-input.md) |
 | Kindle DX and broader parity coverage | 7, 16 | Not started |
 | Dependency cleanup | 11 | Not started |
 | Distributed dependency license notices | 12 | Not started |

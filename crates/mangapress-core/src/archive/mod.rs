@@ -18,15 +18,40 @@ pub struct SourceEntry {
     pub bytes: Vec<u8>,
 }
 
-/// A book's source entries and the count of files rejected by name before reading.
+/// A book's source entries and diagnostics for entries rejected before reading.
 #[derive(Default)]
 pub struct BookInput {
     pub entries: Vec<SourceEntry>,
     pub skipped_non_images: usize,
+    pub skipped_links: Vec<SkippedLink>,
+}
+
+/// A rejected folder link. Only its own relative path is retained, not its target.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SkippedLink {
+    pub relative_path: std::path::PathBuf,
+    pub reason: LinkSkipReason,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum LinkSkipReason {
+    OutsideInput,
+    NotAFile,
+    Unresolved,
+}
+
+impl std::fmt::Display for LinkSkipReason {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::OutsideInput => "it leads outside the input folder",
+            Self::NotAFile => "it does not lead to a regular file",
+            Self::Unresolved => "its target could not be resolved",
+        })
+    }
 }
 
 /// Read only page images and root-level `ComicInfo.xml`, preserving natural
-/// order and counting ignored files without loading their contents.
+/// order and reporting ignored files/links without loading their contents.
 pub fn read_book(path: &std::path::Path) -> crate::Result<BookInput> {
     let keep = |entry: &std::path::Path| {
         entry == std::path::Path::new("ComicInfo.xml") || is_page_image(entry)

@@ -75,6 +75,13 @@ width/height overrides when used for conversion.
 
 Book inspection filters non-image payloads before reading them, while retaining root-level
 `ComicInfo.xml`. Ignored files still count toward `skipped_non_images`, including on a dry run.
+For folder input, descendant links are followed only to regular files inside the real input
+root. External, unresolvable, and directory links are excluded and reported separately as
+`link_skipped` warnings at `inspect`, on dry-run and conversion, in natural path order. Each
+warning's `path` names the link, not its target; `message` gives the reason without target
+details. If no pages remain, these warnings precede `no_page_images`. See
+[ADR 0017](adr/0017-folder-links-stay-inside-the-input.md) for scope and limitations.
+
 The [input limits](adr/0015-bounded-input-reads.md) use the existing failure codes: file/entry
 limits are `input_read_failed`; image limits use the relevant processing, cover, or spread
 failure. The error's `diagnostic` describes the exceeded limit; there is no completed result
@@ -96,6 +103,7 @@ Version 1 issue codes are:
 | `input_read_failed` | `inspect` | The folder or CBZ could not be read |
 | `input_empty` | `inspect` | The input contains no files |
 | `skipped_non_images` | `inspect` | Non-image entries were ignored |
+| `link_skipped` | `inspect` | A folder link was excluded because it leads outside the input, is not a regular file, or could not be resolved |
 | `no_page_images` | `inspect` | No recognized image entries remain |
 | `source_already_converted` | `inspect` | The pages carry KCC's own file names; converting again loses quality |
 | `images_smaller_than_device` | `inspect` | Over a quarter of the pages are smaller than the screen and nothing enlarges them |

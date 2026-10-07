@@ -13,6 +13,7 @@ pub mod crop;
 pub mod ebook;
 pub mod error;
 pub mod fill_check;
+pub mod input;
 pub mod manga;
 pub mod metadata;
 pub mod natural_sort;
@@ -26,3 +27,11 @@ pub mod webtoon;
 
 pub use error::{Error, Result};
 pub use profile::Profile;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/input_safety.rs"
+    ));
+}

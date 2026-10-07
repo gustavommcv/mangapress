@@ -4,7 +4,7 @@ mod protocol;
 use anyhow::{bail, Context};
 use args::{Cli, Cropping, Format, InterPanelCrop, MetadataTitle, Splitter};
 use clap::{error::ErrorKind, Parser};
-use mangapress_core::archive::{cbz::extract_cbz, folder::read_folder, SourceEntry};
+use mangapress_core::archive::read_book;
 use mangapress_core::ebook::{
     cbz_out, cover, epub, group_into_chapters, pdf, spreads, Chapter, Page,
 };
@@ -169,7 +169,8 @@ fn spread_labels_beside(input: &Path) -> Option<PathBuf> {
 
 /// The positions in a spread-label file: `{"spreads": [12, 40]}`.
 fn read_spread_labels(path: &Path) -> Result<Vec<usize>, String> {
-    let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let bytes = mangapress_core::input::read_file(path).map_err(|error| error.to_string())?;
+    let text = String::from_utf8(bytes).map_err(|error| error.to_string())?;
     let value: serde_json::Value =
         serde_json::from_str(&text).map_err(|error| error.to_string())?;
     let positions = value
@@ -648,14 +649,11 @@ fn run<W: std::io::Write + Send>(
         format!("reading input from {}", input.display()),
     )
     .with_path(input_path.clone());
-    let mut source_entries: Vec<SourceEntry> = if input.is_dir() {
-        read_folder(&input)
-    } else {
-        extract_cbz(&input)
-    }
-    .with_context(|| format!("reading input from {}", input.display()))?;
+    let book_input =
+        read_book(&input).with_context(|| format!("reading input from {}", input.display()))?;
+    let mut source_entries = book_input.entries;
 
-    if source_entries.is_empty() {
+    if source_entries.is_empty() && book_input.skipped_non_images == 0 {
         *failure = RunFailure::new(
             "input_empty",
             "inspect",
@@ -725,6 +723,7 @@ fn run<W: std::io::Write + Send>(
 
     let (source_entries, skipped_non_images) =
         mangapress_core::archive::filter_image_entries(source_entries);
+    let skipped_non_images = skipped_non_images + book_input.skipped_non_images;
     if skipped_non_images > 0 {
         let message = format!(
             "Skipped {skipped_non_images} non-image file(s) because their extensions aren't recognized."
@@ -821,7 +820,7 @@ fn run<W: std::io::Write + Send>(
         Some(found)
     });
     let custom_cover: Option<Vec<u8>> = match &cover_path {
-        Some(path) => match std::fs::read(path) {
+        Some(path) => match mangapress_core::input::read_file(path) {
             Ok(bytes) => Some(bytes),
             Err(error) => {
                 *failure = RunFailure::new(

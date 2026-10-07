@@ -18,6 +18,26 @@ pub struct SourceEntry {
     pub bytes: Vec<u8>,
 }
 
+/// A book's source entries and the count of files rejected by name before reading.
+#[derive(Default)]
+pub struct BookInput {
+    pub entries: Vec<SourceEntry>,
+    pub skipped_non_images: usize,
+}
+
+/// Read only page images and root-level `ComicInfo.xml`, preserving natural
+/// order and counting ignored files without loading their contents.
+pub fn read_book(path: &std::path::Path) -> crate::Result<BookInput> {
+    let keep = |entry: &std::path::Path| {
+        entry == std::path::Path::new("ComicInfo.xml") || is_page_image(entry)
+    };
+    if path.is_dir() {
+        folder::read_selected(path, keep)
+    } else {
+        cbz::extract_selected(std::fs::File::open(path)?, keep)
+    }
+}
+
 /// Recognized page image extensions (case-insensitive) — matches KCC's own
 /// `removeNonImages()` filtering by extension, not by sniffing file content.
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
@@ -26,6 +46,14 @@ const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp"];
 pub fn has_image_extension(path: &std::path::Path) -> bool {
     path.extension()
         .is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.to_string_lossy().to_lowercase().as_str()))
+}
+
+fn is_page_image(path: &std::path::Path) -> bool {
+    let is_macos_sidecar = path.components().any(|c| c.as_os_str() == "__MACOSX")
+        || path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with("._"));
+    has_image_extension(path) && !is_macos_sidecar
 }
 
 /// Drops entries that aren't recognized page images before they can reach
@@ -44,17 +72,7 @@ pub fn filter_image_entries(entries: Vec<SourceEntry>) -> (Vec<SourceEntry>, usi
     let kept = entries
         .into_iter()
         .filter(|entry| {
-            let is_macos_sidecar = entry
-                .relative_path
-                .components()
-                .any(|c| c.as_os_str() == "__MACOSX")
-                || entry
-                    .relative_path
-                    .file_name()
-                    .is_some_and(|n| n.to_string_lossy().starts_with("._"));
-            let is_recognized_image = has_image_extension(&entry.relative_path);
-
-            let keep = is_recognized_image && !is_macos_sidecar;
+            let keep = is_page_image(&entry.relative_path);
             if !keep {
                 skipped += 1;
             }

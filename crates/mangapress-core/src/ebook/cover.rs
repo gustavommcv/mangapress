@@ -62,7 +62,7 @@ pub fn build_cover_reporting(
     source_bytes: &[u8],
     options: &CoverOptions,
 ) -> Result<(Vec<u8>, bool)> {
-    let source = image::load_from_memory(source_bytes)?.to_rgb8();
+    let source = crate::input::decode_image(source_bytes)?.to_rgb8();
     let stretched = crate::contrast::autocontrast_preserving_tone(&source);
     if options.force_color {
         finish_cover(stretched, ExtendedColorType::Rgb8, options)
@@ -296,6 +296,14 @@ mod tests {
             .pixels()
             .fold((255u8, 0u8), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
         assert!(low < 5 && high > 250, "{low}..{high}");
+    }
+
+    #[test]
+    fn an_oversized_cover_is_refused_before_pixel_processing() {
+        assert!(matches!(
+            build_cover(&crate::test_support::oversized_bmp(), &options()),
+            Err(crate::Error::ImageTooLarge { .. })
+        ));
     }
 
     #[test]

@@ -14,3 +14,4 @@
 12. [A two-level table of contents for a combined series, EPUB only](0012-nested-toc-for-combined-volumes.md)
 13. [Follow a named KCC release exactly, and leave out what exists only for Amazon's converter](0013-follow-a-named-kcc-release.md)
 14. [Defer WebP output, and smaller JPEG](0014-webp-output-deferred.md)
+15. [Bound input reads and check image dimensions before decoding](0015-bounded-input-reads.md)

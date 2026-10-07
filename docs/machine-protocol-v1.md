@@ -63,6 +63,13 @@ width/height overrides when used for conversion.
 
 ## Issues
 
+Book inspection filters non-image payloads before reading them, while retaining root-level
+`ComicInfo.xml`. Ignored files still count toward `skipped_non_images`, including on a dry run.
+The [input limits](adr/0015-bounded-input-reads.md) use the existing failure codes: file/entry
+limits are `input_read_failed`; image limits use the relevant processing, cover, or spread
+failure. The error's `diagnostic` describes the exceeded limit; there is no completed result
+or output write after that failure. A dry run checks entry bytes, not every image's decodability.
+
 Every warning or error includes `severity`, stable `code`, `stage`, `recoverable`, and a user-facing
 `message`. Optional context includes `manga`, `volume`, `chapter`, `page`, and `path`. Error events
 also contain `diagnostic` for an explicitly expanded technical-details view. Consumers branch on

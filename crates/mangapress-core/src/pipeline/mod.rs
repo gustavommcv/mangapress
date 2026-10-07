@@ -200,6 +200,7 @@ pub fn process_page(
     is_first_page: bool,
 ) -> Result<Vec<ProcessedPage>> {
     if options.no_processing {
+        crate::input::image_dimensions(source_bytes)?;
         let extension = match image::guess_format(source_bytes) {
             Ok(ImageFormat::Png) => "png",
             Ok(ImageFormat::Gif) => "gif",
@@ -214,7 +215,7 @@ pub fn process_page(
         }]);
     }
 
-    let decoded = image::load_from_memory(source_bytes)?;
+    let decoded = crate::input::decode_image(source_bytes)?;
     // Upstream answers "not color" for a single-channel source without
     // measuring it.
     let single_channel = !decoded.color().has_color();
@@ -1017,6 +1018,19 @@ mod tests {
         assert_eq!(page.len(), 1);
         assert_eq!(page[0].extension, "png");
         assert_eq!(page[0].bytes, source);
+    }
+
+    #[test]
+    fn oversized_images_are_refused_in_normal_and_passthrough_modes() {
+        let source = crate::test_support::oversized_bmp();
+        for no_processing in [false, true] {
+            let mut options = options();
+            options.no_processing = no_processing;
+            assert!(matches!(
+                process_page(&source, &options, true),
+                Err(crate::Error::ImageTooLarge { .. })
+            ));
+        }
     }
 
     #[test]

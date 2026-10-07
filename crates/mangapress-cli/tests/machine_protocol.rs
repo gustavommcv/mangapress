@@ -3,6 +3,13 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+mod hostile_inputs {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/input_safety.rs"
+    ));
+}
+
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_mangapress")
 }
@@ -461,4 +468,223 @@ fn real_mangabind_fixture_emits_parseable_conversion_when_available() {
         std::fs::metadata(output_path).unwrap().len(),
         result["bytes"].as_u64().unwrap()
     );
+}
+
+#[test]
+fn a_forged_zip64_size_fails_cleanly_in_human_and_machine_modes() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("forged.cbz");
+    std::fs::write(
+        &input,
+        hostile_inputs::zip_with_declared_size(&[("p1.png", b"tiny")], 0, 1 << 62),
+    )
+    .unwrap();
+    let destination = temp.path().join("existing.cbz");
+    std::fs::write(&destination, b"previous book").unwrap();
+    for machine in [false, true] {
+        let mut command = Command::new(binary());
+        command
+            .arg(&input)
+            .args(["--format", "cbz", "--output"])
+            .arg(&destination);
+        if machine {
+            command.arg("--json-events");
+        }
+        let output = command.output().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "no panic or abnormal process exit"
+        );
+        if machine {
+            let events = parse_events(&output);
+            let error = events.last().unwrap();
+            assert_eq!(error["type"], "error");
+            assert_eq!(error["code"], "input_read_failed");
+            assert_eq!(error["stage"], "inspect");
+            assert!(error["diagnostic"]
+                .as_str()
+                .unwrap()
+                .contains("268435456-byte limit"));
+            assert!(!events.iter().any(|event| event["type"] == "result"));
+        } else {
+            assert!(output.stdout.is_empty());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("268435456-byte limit"));
+        }
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous book");
+    }
+}
+
+#[test]
+fn discarded_archive_payloads_are_never_loaded_and_metadata_survives_conversion() {
+    let temp = tempfile::tempdir().unwrap();
+    let page_path = temp.path().join("source.png");
+    write_png(&page_path, 89);
+    let page = std::fs::read(page_path).unwrap();
+    let xml = b"<ComicInfo><Series>Metadata title</Series></ComicInfo>";
+    let bytes = hostile_inputs::zip_with_declared_size(
+        &[
+            ("ComicInfo.xml", xml),
+            ("notes.txt", b"tiny"),
+            ("c001/p1.PNG", &page),
+            ("c001/ComicInfo.xml", b"ignored"),
+            ("__MACOSX/._p1.png", b"ignored"),
+        ],
+        1,
+        1 << 62,
+    );
+    let input = temp.path().join("source.cbz");
+    std::fs::write(&input, bytes).unwrap();
+    for dry_run in [true, false] {
+        let destination = temp.path().join("book.cbz");
+        let mut command = Command::new(binary());
+        command
+            .arg(&input)
+            .args([
+                "--json-events",
+                "--format",
+                "cbz",
+                "--keepcomicinfo",
+                "--noprocessing",
+                "--output",
+            ])
+            .arg(&destination);
+        if dry_run {
+            command.arg("--dry-run");
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let events = parse_events(&output);
+        let warning = events
+            .iter()
+            .find(|event| event["code"] == "skipped_non_images")
+            .unwrap();
+        assert_eq!(warning["count"], 3);
+        let result = events.last().unwrap();
+        assert_eq!(result["type"], "result");
+        assert_eq!(result["manga"], "Metadata title");
+        assert_eq!(result["source_pages"], 1);
+        assert_eq!(result["written"], !dry_run);
+        if !dry_run {
+            let mut archive =
+                zip::ZipArchive::new(std::fs::File::open(&destination).unwrap()).unwrap();
+            let mut actual_xml = Vec::new();
+            std::io::Read::read_to_end(
+                &mut archive.by_name("ComicInfo.xml").unwrap(),
+                &mut actual_xml,
+            )
+            .unwrap();
+            assert_eq!(actual_xml, xml);
+        } else {
+            assert!(!destination.exists());
+        }
+    }
+}
+
+#[test]
+fn image_limits_apply_to_processing_passthrough_webtoon_spreads_and_covers() {
+    for (flags, expected_code, stage, custom_cover) in [
+        (vec![], "page_processing_failed", "process", false),
+        (
+            vec!["--noprocessing"],
+            "page_processing_failed",
+            "process",
+            false,
+        ),
+        (vec!["--webtoon"], "webtoon_split_failed", "process", false),
+        (vec!["--spreads"], "spread_join_failed", "inspect", false),
+        (vec!["--cover"], "cover_build_failed", "package", true),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("input");
+        std::fs::create_dir(&input).unwrap();
+        let oversized = hostile_inputs::oversized_bmp();
+        if custom_cover {
+            write_png(&input.join("p1.png"), 89);
+        } else {
+            std::fs::write(input.join("p1.bmp"), &oversized).unwrap();
+        }
+        write_png(&input.join("p2.png"), 89);
+        let labels = temp.path().join("spreads.json");
+        std::fs::write(&labels, br#"{"spreads": [0]}"#).unwrap();
+        let cover = temp.path().join("cover.bmp");
+        std::fs::write(&cover, oversized).unwrap();
+        let destination = temp.path().join("book.epub");
+        let mut command = Command::new(binary());
+        command
+            .arg(&input)
+            .args(["--json-events", "--output"])
+            .arg(&destination)
+            .args(&flags);
+        if flags.contains(&"--spreads") {
+            command.arg(&labels);
+        }
+        if custom_cover {
+            command.arg(&cover);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{flags:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let events = parse_events(&output);
+        let error = events.last().unwrap();
+        assert_eq!(error["type"], "error", "{flags:?}: {error}");
+        assert_eq!(error["code"], expected_code, "{flags:?}");
+        assert_eq!(error["stage"], stage, "{flags:?}");
+        let pixel_limit = mangapress_core::input::MAX_IMAGE_PIXELS;
+        assert!(
+            error["diagnostic"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("{pixel_limit}-pixel limit")),
+            "{flags:?}: {error}"
+        );
+        assert!(!destination.exists());
+        assert!(!events.iter().any(|event| event["type"] == "result"));
+    }
+}
+
+#[test]
+fn early_filtering_keeps_empty_and_no_image_diagnostics_distinct() {
+    for (file, code, skipped) in [
+        (None, "input_empty", 0),
+        (
+            Some(("notes.txt", b"notes".as_slice())),
+            "no_page_images",
+            1,
+        ),
+        (
+            Some(("ComicInfo.xml", b"<ComicInfo/>".as_slice())),
+            "no_page_images",
+            0,
+        ),
+    ] {
+        let input = tempfile::tempdir().unwrap();
+        if let Some((name, bytes)) = file {
+            std::fs::write(input.path().join(name), bytes).unwrap();
+        }
+        let output = Command::new(binary())
+            .arg(input.path())
+            .args(["--dry-run", "--json-events"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let events = parse_events(&output);
+        assert_eq!(events.last().unwrap()["code"], code);
+        let warning = events
+            .iter()
+            .find(|event| event["code"] == "skipped_non_images");
+        if skipped == 0 {
+            assert!(warning.is_none());
+        } else {
+            assert_eq!(warning.unwrap()["count"], skipped);
+        }
+    }
 }

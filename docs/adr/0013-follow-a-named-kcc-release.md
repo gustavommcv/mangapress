@@ -68,6 +68,7 @@ deliberate, and is also written down where the code makes it:
 | A spread kept upright (`--norotate`) may be two screens wide on every device; KCC caps it at 1920x1920 for a Kindle profile's EPUB | The cap is the converter's limit. KOReader's engine has none: checked at a Kindle Scribe's resolution, where pages 2480 pixels tall and a spread 2003 wide are drawn undistorted. |
 | `--format auto` gives a Kindle EPUB | KCC goes on to MOBI. |
 | Only `.cbz` and folders are read | CBR, CB7, PDF and EPUB input need external tools or large libraries; one binary with nothing else to install is the point of this project (ADR 0001, 0002). |
+| One input file or uncompressed archive entry is limited to 256 MiB | Bounds an individual read; not a book-size limit. The pixel-area check retains KCC's larger page limit (ADR 0015). |
 | Chapters are keyed by their full path | Fixes a title collision in KCC (ADR 0005). |
 | A cover in the `Covers` folder can be matched by name; `Covers` is not counted as a book | Position alone hands a book without a cover its neighbor's, and KCC counts the folder itself when the input is a folder. |
 | An output that would overwrite its input is named `… (mangapress)` | KCC's `_kccN`, under this tool's name. |

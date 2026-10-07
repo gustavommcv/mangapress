@@ -3,7 +3,7 @@
 //! hard-requires it for extraction, even of a plain ZIP — see
 //! `docs/adr/0002-pip-workaround-tested-and-rejected.md`).
 
-use super::SourceEntry;
+use super::{BookInput, SourceEntry};
 use crate::error::Result;
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -22,25 +22,41 @@ pub fn extract_cbz(path: &Path) -> Result<Vec<SourceEntry>> {
 /// tests (and any future non-filesystem source) can exercise the real ZIP
 /// parsing logic without touching disk.
 pub fn extract_from_reader<R: Read + Seek>(reader: R) -> Result<Vec<SourceEntry>> {
+    Ok(extract_selected(reader, |_| true)?.entries)
+}
+
+pub(super) fn extract_selected<R: Read + Seek>(
+    reader: R,
+    keep: impl Fn(&Path) -> bool,
+) -> Result<BookInput> {
     let mut archive = zip::ZipArchive::new(reader)?;
-    let mut entries = Vec::with_capacity(archive.len());
+    let mut input = BookInput::default();
 
     for i in 0..archive.len() {
-        let mut zip_entry = archive.by_index(i)?;
+        // Inspect the name without constructing a decompressor for an entry
+        // that will be discarded. Its CRC and payload are never read.
+        let zip_entry = archive.by_index_raw(i)?;
         if zip_entry.is_dir() {
             continue;
         }
         let relative_path = PathBuf::from(zip_entry.name());
-        let mut bytes = Vec::with_capacity(zip_entry.size() as usize);
-        zip_entry.read_to_end(&mut bytes)?;
-        entries.push(SourceEntry {
+        let declared_size = zip_entry.size();
+        drop(zip_entry);
+        if !keep(&relative_path) {
+            input.skipped_non_images += 1;
+            continue;
+        }
+        let bytes = crate::input::read_entry(archive.by_index(i)?, &relative_path, declared_size)?;
+        input.entries.push(SourceEntry {
             relative_path,
             bytes,
         });
     }
 
-    entries.sort_by(|a, b| crate::natural_sort::compare_paths(&a.relative_path, &b.relative_path));
-    Ok(entries)
+    input
+        .entries
+        .sort_by(|a, b| crate::natural_sort::compare_paths(&a.relative_path, &b.relative_path));
+    Ok(input)
 }
 
 /// Package named byte blobs into a ZIP archive. `store_uncompressed`
@@ -189,5 +205,57 @@ mod tests {
     fn path_to_entry_name_uses_forward_slashes() {
         let path = PathBuf::from("c001 - Title").join("page001.jpg");
         assert_eq!(path_to_entry_name(&path), "c001 - Title/page001.jpg");
+    }
+
+    #[test]
+    fn oversized_zip64_declarations_fail_without_reserving_the_declared_size() {
+        for size in [crate::input::MAX_ENTRY_BYTES + 1, 1 << 62] {
+            let bytes =
+                crate::test_support::zip_with_declared_size(&[("page.png", b"tiny")], 0, size);
+            let error = match extract_from_reader(Cursor::new(bytes)) {
+                Ok(_) => panic!("oversized input must be refused"),
+                Err(error) => error,
+            };
+            assert!(matches!(error, crate::Error::InputTooLarge { path, limit }
+                if path == Path::new("page.png") && limit == crate::input::MAX_ENTRY_BYTES));
+        }
+    }
+
+    #[test]
+    fn book_selection_skips_oversized_non_images_and_keeps_metadata_and_order() {
+        let xml = b"<ComicInfo><Series>Test</Series></ComicInfo>";
+        let bytes = crate::test_support::zip_with_declared_size(
+            &[
+                ("notes.txt", b"tiny"),
+                ("c002/p1.png", b"two"),
+                ("ComicInfo.xml", xml),
+                ("c001/p1.png", b"one"),
+                ("c001/ComicInfo.xml", b"ignored"),
+                ("__MACOSX/._p1.png", b"ignored"),
+            ],
+            0,
+            1 << 62,
+        );
+        let input = extract_selected(Cursor::new(bytes), |path| {
+            path == Path::new("ComicInfo.xml") || super::super::is_page_image(path)
+        })
+        .unwrap();
+        assert_eq!(input.skipped_non_images, 3);
+        assert_eq!(input.entries.len(), 3);
+        assert_eq!(input.entries[0].relative_path, Path::new("c001/p1.png"));
+        assert_eq!(input.entries[0].bytes, b"one");
+        assert_eq!(input.entries[1].relative_path, Path::new("c002/p1.png"));
+        assert_eq!(input.entries[2].bytes, xml);
+    }
+
+    #[test]
+    fn corrupt_selected_payloads_still_fail_crc_validation() {
+        let mut bytes = write_zip(&[("p1.png".to_string(), b"payload".to_vec())], true).unwrap();
+        let payload = bytes
+            .windows(7)
+            .position(|part| part == b"payload")
+            .unwrap();
+        bytes[payload] ^= 1;
+        assert!(extract_selected(Cursor::new(bytes), super::super::is_page_image).is_err());
     }
 }

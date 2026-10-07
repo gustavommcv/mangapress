@@ -87,6 +87,10 @@ mangapress "Volume 1.cbz" --profile K11 --format epub --dry-run
 `--dry-run` inspects the book without processing pages or writing output. Run
 `mangapress --help` for the full list of options and defaults.
 
+One input file or uncompressed CBZ entry is limited to 256 MiB; this is not a limit on the
+whole book. Oversized images are checked before pixel decoding. See
+[input limits](docs/adr/0015-bounded-input-reads.md) for the KCC thresholds and memory limitations.
+
 ### Common options
 
 | Option | What it changes |

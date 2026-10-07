@@ -198,3 +198,5 @@ implementation and licensing boundary.
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) contains credits and license notices for KCC
 and Pillow.
+Release packaging also generates `DEPENDENCY-LICENSES.txt` with the compiled dependencies'
+source license texts and credits; see [notice generation](tools/licenses/README.md).

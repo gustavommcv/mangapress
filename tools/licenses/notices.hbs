@@ -1,0 +1,19 @@
+Third-party dependency licenses for mangapress
+============================================
+
+Generated from Cargo.lock by cargo-about. This file covers the Rust dependency
+graph for the selected release target, including build dependencies but not
+development-only dependencies. The project's own licenses and KCC/Pillow notices
+are provided separately in LICENSE-MIT, LICENSE-APACHE, and THIRD-PARTY-NOTICES.md.
+
+{{#each licenses}}
+{{name}} ({{id}})
+--------------------------------------------
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}{{#if crate.repository}} ({{crate.repository}}){{/if}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

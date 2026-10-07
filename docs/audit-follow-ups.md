@@ -11,7 +11,7 @@ verified remote checks for the exact commit, as described in [CONTRIBUTING](../C
 | Symbolic-link policy | 9 | In progress; approved containment policy in [ADR 0017](adr/0017-folder-links-stay-inside-the-input.md) |
 | Kindle DX and broader parity coverage | 7, 16 | In progress; format-specific target and [multi-profile comparison](../tools/parity/README.md) |
 | Dependency cleanup | 11 | In progress; unused crates removed and image codecs restricted to the supported page formats |
-| Distributed dependency license notices | 12 | Not started |
+| Distributed dependency license notices | 12 | In progress; target-specific source notices generated and checked for release archives |
 | CI and release checks | 13 | Not started |
 | Installer checksums and version selection | 13 | Not started |
 | CLI diagnostics, help, and documentation | 8, 10, 15 | Not started |
@@ -52,6 +52,18 @@ in `image`. Regression tests cover supported inputs, book outputs, and rejection
 unsupported image disguised with a supported extension, including passthrough mode.
 Re-run the full named KCC comparison. Dependency advisory and license checks belong to the
 later CI/release and distributed-notices topics, rather than a second policy in this PR.
+
+## Distributed-notices scope
+
+Generate source license texts and credits from the locked CLI graph for all four release
+targets, including bundled native-library notices. Reuse cargo-about in CI and release
+packaging, and reject generic fallback text that loses copyright attribution. Build
+dependencies are included conservatively, not claimed as code present in the executable.
+The original KCC/Pillow notices and mangapress's own license remain unchanged.
+
+The installer follow-up must also preserve these files after extraction: Windows already
+keeps archive contents, but the Unix installer currently moves only the executable.
+Do not consider that installation path covered by archive generation alone.
 
 ## Final pre-release parity review
 

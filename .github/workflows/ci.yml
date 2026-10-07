@@ -27,3 +27,34 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
         run: cargo test --workspace
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Notice validation tests
+        run: python -m unittest discover -s tools/licenses -p "test_*.py"
+
+  dependency-notices:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-14
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/dependency-notices
+        with:
+          target: ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dependency-notices-${{ matrix.target }}
+          path: target/dependency-notices/${{ matrix.target }}/DEPENDENCY-LICENSES.txt
+          if-no-files-found: error

@@ -24,6 +24,9 @@ cargo run -p mangapress-cli -- --help
 
 CI checks formatting, linting, and tests on Windows, macOS, and Linux. Release targets and
 packaging are defined in [the release workflow](.github/workflows/release.yml).
+Dependency changes also require the four target-specific
+[license-notice checks](tools/licenses/README.md). CI and release packaging use the same
+generator; review its reports rather than accepting missing notices or generic fallback text.
 
 ## Where to make a change
 

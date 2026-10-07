@@ -10,11 +10,12 @@ verified remote checks for the exact commit, as described in [CONTRIBUTING](../C
 | Output names, validation, and atomic writes | 3–6 | In progress; policy in [ADR 0016](adr/0016-safe-output-planning-and-publication.md) |
 | Symbolic-link policy | 9 | In progress; approved containment policy in [ADR 0017](adr/0017-folder-links-stay-inside-the-input.md) |
 | Kindle DX and broader parity coverage | 7, 16 | In progress; format-specific target and [multi-profile comparison](../tools/parity/README.md) |
-| Dependency cleanup | 11 | Not started |
+| Dependency cleanup | 11 | In progress; unused crates removed and image codecs restricted to the supported page formats |
 | Distributed dependency license notices | 12 | Not started |
 | CI and release checks | 13 | Not started |
 | Installer checksums and version selection | 13 | Not started |
 | CLI diagnostics, help, and documentation | 8, 10, 15 | Not started |
+| Final pre-release parity review | Follow-up to 16 | Planned after the audit PRs, before the next release |
 
 Finding 18's failure-path tests accompany the relevant fixes. The allocator/distribution
 benchmark (14) and the large orchestration refactor (17) are deferred, not resolved.
@@ -43,3 +44,29 @@ choice to retain the larger limit are recorded in ADR 0015. The original report 
 
 The input follow-up bounds individual reads and checks image area. It does not establish a
 whole-process memory budget; book size, parallelism, and intermediate buffers still matter.
+
+## Dependency cleanup scope
+
+Remove unused `imageproc` and `slug` dependencies and enable only JPEG, PNG, GIF, BMP, and WebP
+in `image`. Regression tests cover supported inputs, book outputs, and rejection of an
+unsupported image disguised with a supported extension, including passthrough mode.
+Re-run the full named KCC comparison. Dependency advisory and license checks belong to the
+later CI/release and distributed-notices topics, rather than a second policy in this PR.
+
+## Final pre-release parity review
+
+After the audit PRs, review the comparison against KCC 12.0.0 before the next release:
+
+1. Inventory relevant options shared by both tools. Distinguish direct comparisons, Rust-only
+   tests, untested behavior, and deliberate differences documented in ADR 0013. KCC-only
+   features are not requirements for mangapress.
+2. Fill meaningful gaps: PNG variants, JPEG quality, passthrough, reading direction, custom
+   dimensions, and a small selection of interacting options. Extend the synthetic corpus
+   with transparency, odd dimensions, asymmetric pages, and threshold-boundary cases.
+3. Add a few actual CLI-to-book comparisons for page order, covers, navigation, and metadata.
+   Compare the books' meaning, not identical compressed bytes or timestamps.
+4. Reuse the existing comparison tools. Keep routine CI small and use a broader matrix before
+   release; report the tested coverage and remaining gaps without claiming exhaustive parity.
+
+This is the final planned block, not part of the dependency cleanup. Preserve accepted
+differences rather than changing output merely to make a comparison pass.

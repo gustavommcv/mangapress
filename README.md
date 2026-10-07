@@ -69,8 +69,9 @@ mangapress "Volume 1.cbz" --profile K11 --format epub --output "Books/Volume 1.e
 ```
 
 Missing output folders are created automatically. Input can be a CBZ, a folder
-of images, or a folder containing chapter subfolders. CBR, CB7, EPUB, and PDF input are not
-supported.
+of images, or a folder containing chapter subfolders. Pages can be JPEG (`.jpg` or `.jpeg`),
+PNG, GIF, BMP, or WebP. Other image formats are not decoded, even if renamed to a supported
+extension. CBR, CB7, EPUB, and PDF input are not supported.
 
 Inside folder input, symbolic links are followed only to regular files within that folder.
 External, broken, and directory links are skipped with a warning, including on `--dry-run`.

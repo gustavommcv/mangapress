@@ -9,11 +9,9 @@ description = "Manga/comic e-ink conversion pipeline: device profiles, image pro
 [dependencies]
 image = { workspace = true }
 png = { workspace = true }
-imageproc = { workspace = true }
 rustfft = { workspace = true }
 zip = { workspace = true }
 thiserror = { workspace = true }
-slug = { workspace = true }
 printpdf = { workspace = true }
 roxmltree = { workspace = true }
 

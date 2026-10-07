@@ -90,6 +90,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_supported_page_codecs_are_enabled() {
+        let supported = [
+            image::ImageFormat::Jpeg,
+            image::ImageFormat::Png,
+            image::ImageFormat::Gif,
+            image::ImageFormat::Bmp,
+            image::ImageFormat::WebP,
+        ];
+        // Cargo unifies features across dependencies, including dev-dependencies.
+        // Catch a dependency accidentally enabling the default codecs again.
+        for format in image::ImageFormat::all() {
+            assert_eq!(
+                format.reading_enabled(),
+                supported.contains(&format),
+                "{format:?}"
+            );
+            assert_eq!(
+                format.writing_enabled(),
+                supported.contains(&format),
+                "{format:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn content_sniffing_does_not_enable_an_unsupported_decoder() {
+        let pnm = b"P6\n1 1\n255\n\x01\x02\x03";
+        assert_eq!(image::guess_format(pnm).unwrap(), image::ImageFormat::Pnm);
+        for error in [
+            image_dimensions(pnm).unwrap_err(),
+            decode_image(pnm).unwrap_err(),
+        ] {
+            assert!(matches!(
+                error,
+                Error::Image(image::ImageError::Unsupported(_))
+            ));
+        }
+    }
+
+    #[test]
     fn declared_size_is_rejected_before_reading() {
         struct MustNotRead;
         impl Read for MustNotRead {

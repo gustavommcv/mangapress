@@ -4,6 +4,12 @@
 
 Accepted.
 
+Later decisions: [ADR 0011](0011-versioned-json-lines-events.md) supersedes the conclusion about declining
+machine-readable output. [ADR 0016](0016-safe-output-planning-and-publication.md) updates output
+publication: the original interrupt measurement below concerned a new output during processing,
+not the safety of replacing a file during the final write. Staging now protects final paths,
+but abrupt termination can leave a private temporary file. The original evidence is preserved.
+
 ## Context
 
 mangapress's CLI grew flag-by-flag as each pipeline feature landed (see `mangapress-cli/src/args.rs`'s

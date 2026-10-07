@@ -237,7 +237,8 @@ pub struct Cli {
     #[arg(short, long, value_enum, default_value_t = Format::Auto)]
     pub format: Format,
 
-    /// Output file or directory.
+    /// Output file or directory. Derived names follow the input, not the book title.
+    /// Existing files are preserved with a numbered alternate name; the result reports the path used.
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 

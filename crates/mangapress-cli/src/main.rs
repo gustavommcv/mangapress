@@ -1,4 +1,5 @@
 mod args;
+mod output;
 mod protocol;
 
 use anyhow::{bail, Context};
@@ -22,91 +23,6 @@ use std::ffi::OsString;
 use std::io::{IsTerminal, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-
-/// A resolved book title (from `--title`, `ComicInfo.xml`'s `Series`/`Title`,
-/// or the input filename) can contain characters that are illegal in a
-/// filename on Windows, or that `/`/`\` would misread as path separators on
-/// any platform (e.g. `--metadatatitle combine` appends `": Title"`) —
-/// replace the reserved set with `-` before using the title as an output
-/// filename.
-fn sanitize_filename(name: &str) -> String {
-    name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "-")
-}
-
-/// Best-effort "do these two paths refer to the same file" check. `input`
-/// always exists by this point; `candidate_output` usually doesn't yet, so
-/// this can't just canonicalize both and compare -- it canonicalizes
-/// `candidate_output`'s parent instead and rejoins the file name. Good
-/// enough to catch the case this exists for (an unset `--output`, or an
-/// explicit one, that resolves to the same file being read) without a new
-/// dependency; it isn't a substitute for a real same-file check across
-/// hardlinks etc.
-fn same_file(input: &Path, candidate_output: &Path) -> bool {
-    fn resolve(path: &Path) -> Option<PathBuf> {
-        if path.exists() {
-            return std::fs::canonicalize(path).ok();
-        }
-        let parent = path.parent().filter(|p| !p.as_os_str().is_empty())?;
-        let file_name = path.file_name()?;
-        Some(std::fs::canonicalize(parent).ok()?.join(file_name))
-    }
-
-    match (resolve(input), resolve(candidate_output)) {
-        (Some(a), Some(b)) => a == b,
-        _ => input == candidate_output,
-    }
-}
-
-/// Does `path` already look like a path to one of the ebook formats this
-/// tool writes? Used to decide, for an `--output` path that doesn't exist
-/// yet, whether it names an output *file* to create (so it's a literal
-/// path) or an output *directory* to create (so a filename still needs to
-/// be derived from the title) -- an `--output` naming a not-yet-created
-/// directory would otherwise silently produce an extension-less file
-/// literally named after that directory.
-fn has_known_output_extension(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|e| e.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("epub") | Some("cbz") | Some("pdf")
-    )
-}
-
-/// A sibling path that doesn't collide with `path`, for when `path` would
-/// otherwise overwrite the very input it was derived from. Mirrors KCC's
-/// own `getOutputFilename()`, which appends a `_kccN` suffix for the same
-/// reason: converting a `.cbz` back to `.cbz` with no explicit `--output`
-/// would otherwise destroy the source file being read.
-fn disambiguate_output_path(path: &Path) -> PathBuf {
-    let stem = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let extension = path.extension().map(|e| e.to_string_lossy().into_owned());
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
-
-    for n in 1.. {
-        let name = if n == 1 {
-            format!("{stem} (mangapress)")
-        } else {
-            format!("{stem} (mangapress {n})")
-        };
-        let candidate_name = match &extension {
-            Some(ext) => format!("{name}.{ext}"),
-            None => name,
-        };
-        let candidate = match parent {
-            Some(dir) => dir.join(candidate_name),
-            None => PathBuf::from(candidate_name),
-        };
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    unreachable!()
-}
 
 fn absolute_display(path: &Path) -> String {
     if path.is_absolute() {
@@ -319,24 +235,6 @@ fn automatic_format(profile: &Profile) -> Format {
         Family::Remarkable => Format::Pdf,
         _ => Format::Epub,
     }
-}
-
-/// Upstream's file name for a Kobo EPUB derived from an input *file*: every
-/// run of characters that aren't letters, digits or underscores becomes one
-/// underscore.
-fn kobo_safe_stem(stem: &str) -> String {
-    let mut out = String::with_capacity(stem.len());
-    let mut in_run = false;
-    for c in stem.chars() {
-        if c.is_alphanumeric() || c == '_' {
-            out.push(c);
-            in_run = false;
-        } else if !in_run {
-            out.push('_');
-            in_run = true;
-        }
-    }
-    out
 }
 
 fn format_name(format: Format) -> &'static str {
@@ -980,71 +878,73 @@ fn run<W: std::io::Write + Send>(
     // format ("kepub.epub") is not a value the protocol has.
     let format = format_name(cli.format);
     let extension = if kepub { "kepub.epub" } else { format };
-    let output_path = match &cli.output {
-        Some(path) if path.is_dir() => {
-            path.join(format!("{}.{extension}", sanitize_filename(&title)))
-        }
-        Some(path) if !path.exists() && !has_known_output_extension(path) => {
-            // `--dry-run` promises nothing gets written -- creating the
-            // directory here would itself be a side effect, so only the
-            // hypothetical path is computed; the real create happens below,
-            // once dry-run has already returned.
-            if !cli.dry_run {
-                *failure = RunFailure::new(
-                    "output_directory_create_failed",
-                    "write",
-                    true,
-                    "Couldn't create the selected output folder.",
-                    format!("creating output directory {}", path.display()),
-                )
-                .with_manga(title.clone())
-                .with_path(absolute_display(path));
-                std::fs::create_dir_all(path)
-                    .with_context(|| format!("creating output directory {}", path.display()))?;
-            }
-            path.join(format!("{}.{extension}", sanitize_filename(&title)))
-        }
-        Some(path) => path.clone(),
-        None if kepub && input.is_file() => {
-            let stem = input
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            input.with_file_name(format!("{}.{extension}", kobo_safe_stem(&stem)))
-        }
-        None => input.with_extension(extension),
-    };
-    // With no --output (or an explicit one matching the input), converting
-    // a `.cbz` back to `.cbz` would otherwise silently overwrite the very
-    // source file being read.
-    let output_path = if same_file(&input, &output_path) {
-        let disambiguated = disambiguate_output_path(&output_path);
+    *failure = RunFailure::new(
+        "output_plan_failed",
+        "plan",
+        true,
+        "Couldn't prepare the output destination. Check its path and permissions.",
+        "planning the output destination",
+    )
+    .with_manga(title.clone())
+    .with_path(absolute_display(cli.output.as_deref().unwrap_or(&input)));
+    let output_plan = output::plan(&input, cli.output.as_deref(), extension, kepub)
+        .context("planning the output destination")?;
+    let output_path = output_plan.path;
+    if output_plan.collision {
+        let (code, message) = if output_plan.input_collision {
+            ("output_collision", "The requested output would overwrite the input, so a safe alternate filename will be used.")
+        } else {
+            (
+                "output_exists",
+                "The requested output already exists, so a safe alternate filename will be used.",
+            )
+        };
         if events.enabled() {
             events
                 .emit(
                     "warning",
                     json!({
                         "severity": "warning",
-                        "code": "output_collision",
+                        "code": code,
                         "stage": "plan",
                         "manga": title.clone(),
-                        "path": absolute_display(&disambiguated),
+                        "path": absolute_display(&output_path),
                         "recoverable": true,
-                        "message": "The requested output would overwrite the input, so a safe alternate filename will be used.",
+                        "message": message,
                     }),
                 )
                 .map_err(event_write_failure)?;
         } else {
-            eprintln!(
-                "warning: output would overwrite the input file; writing to {} instead",
-                disambiguated.display()
-            );
+            eprintln!("warning: {message} Writing to {}", output_path.display());
         }
-        disambiguated
-    } else {
-        output_path
-    };
+    }
     let output_path_absolute = absolute_display(&output_path);
+    let staged_output = if cli.dry_run {
+        None
+    } else {
+        let directory = output::parent(&output_path)?;
+        *failure = RunFailure::new(
+            "output_directory_create_failed",
+            "write",
+            true,
+            "Couldn't create the selected output folder.",
+            format!("creating output directory {}", directory.display()),
+        )
+        .with_manga(title.clone())
+        .with_path(absolute_display(directory));
+        std::fs::create_dir_all(directory)
+            .with_context(|| format!("creating output directory {}", directory.display()))?;
+        *failure = RunFailure::new(
+            "output_plan_failed",
+            "plan",
+            true,
+            "Couldn't prepare the output destination. Check its path and permissions.",
+            format!("staging output beside {}", output_path.display()),
+        )
+        .with_manga(title.clone())
+        .with_path(output_path_absolute.clone());
+        Some(output::StagedOutput::new(&output_path).context("staging the output file")?)
+    };
     events
         .emit(
             "stage",
@@ -1500,7 +1400,9 @@ fn run<W: std::io::Write + Send>(
             }),
         )
         .map_err(event_write_failure)?;
-    std::fs::write(&output_path, &output_bytes)
+    staged_output
+        .expect("non-dry-run output was staged before processing")
+        .write(&output_bytes)
         .with_context(|| format!("writing output to {}", output_path.display()))?;
     if !quiet {
         eprintln!(
@@ -1564,13 +1466,6 @@ mod tests {
     }
 
     #[test]
-    fn kobo_safe_stem_collapses_everything_but_word_characters() {
-        assert_eq!(kobo_safe_stem("My Book (v1)"), "My_Book_v1_");
-        assert_eq!(kobo_safe_stem("already_safe_01"), "already_safe_01");
-        assert_eq!(kobo_safe_stem("君の名は - 1"), "君の名は_1");
-    }
-
-    #[test]
     fn utc_timestamp_formats_known_instants() {
         let at = |seconds: u64| {
             utc_timestamp(std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds))
@@ -1582,22 +1477,6 @@ mod tests {
         assert_eq!(at(1_709_251_200), "2024-03-01T00:00:00Z");
         assert_eq!(at(1_790_998_496), "2026-10-03T03:34:56Z");
         assert_eq!(at(4_102_444_799), "2099-12-31T23:59:59Z");
-    }
-
-    #[test]
-    fn sanitize_filename_replaces_every_reserved_character() {
-        assert_eq!(
-            sanitize_filename(r#"a/b\c:d*e?f"g<h>i|j"#),
-            "a-b-c-d-e-f-g-h-i-j"
-        );
-    }
-
-    #[test]
-    fn sanitize_filename_leaves_ordinary_titles_alone() {
-        assert_eq!(
-            sanitize_filename("Chainsaw Man - Vol.01"),
-            "Chainsaw Man - Vol.01"
-        );
     }
 
     /// A series folder: the named books (a name ending in `/` is a folder)
@@ -1731,68 +1610,6 @@ mod tests {
         let dir = series(&["Vol. 1/", "Vol. 2/"], &["Vol. 2.jpg"]);
         assert_eq!(cover_for(&dir, "Vol. 2").as_deref(), Some("Vol. 2.jpg"));
         assert_eq!(cover_for(&dir, "Vol. 1"), None);
-    }
-
-    #[test]
-    fn same_file_recognizes_an_existing_file_under_a_different_spelling() {
-        let dir =
-            std::env::temp_dir().join(format!("mangapress-samefile-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let input = dir.join("book.cbz");
-        std::fs::write(&input, b"x").unwrap();
-
-        // A not-yet-created candidate that resolves to the exact same path.
-        let candidate = dir.join(".").join("book.cbz");
-        assert!(same_file(&input, &candidate));
-
-        let different = dir.join("other.cbz");
-        assert!(!same_file(&input, &different));
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn has_known_output_extension_recognizes_only_the_formats_this_tool_writes() {
-        assert!(has_known_output_extension(Path::new("book.epub")));
-        assert!(has_known_output_extension(Path::new("book.EPUB")));
-        assert!(has_known_output_extension(Path::new("book.cbz")));
-        assert!(has_known_output_extension(Path::new("book.pdf")));
-        assert!(!has_known_output_extension(Path::new("book.zip")));
-        assert!(!has_known_output_extension(Path::new("output-folder")));
-    }
-
-    #[test]
-    fn disambiguate_output_path_appends_a_suffix_and_keeps_the_extension() {
-        let dir = std::env::temp_dir().join(format!(
-            "mangapress-disambiguate-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let colliding = dir.join("book.cbz");
-        std::fs::write(&colliding, b"x").unwrap();
-
-        let result = disambiguate_output_path(&colliding);
-        assert_eq!(result, dir.join("book (mangapress).cbz"));
-        assert!(!result.exists());
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn disambiguate_output_path_counts_up_when_the_first_suffix_also_collides() {
-        let dir = std::env::temp_dir().join(format!(
-            "mangapress-disambiguate-counting-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let colliding = dir.join("book.cbz");
-        std::fs::write(&colliding, b"x").unwrap();
-        std::fs::write(dir.join("book (mangapress).cbz"), b"x").unwrap();
-
-        let result = disambiguate_output_path(&colliding);
-        assert_eq!(result, dir.join("book (mangapress 2).cbz"));
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     fn solid_gray_png(size: u32, gray: u8) -> Vec<u8> {

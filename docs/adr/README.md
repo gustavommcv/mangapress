@@ -15,3 +15,4 @@
 13. [Follow a named KCC release exactly, and leave out what exists only for Amazon's converter](0013-follow-a-named-kcc-release.md)
 14. [Defer WebP output, and smaller JPEG](0014-webp-output-deferred.md)
 15. [Bound input reads and check image dimensions before decoding](0015-bounded-input-reads.md)
+16. [Follow KCC's non-overwriting output names and stage completed writes](0016-safe-output-planning-and-publication.md)

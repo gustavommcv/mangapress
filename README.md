@@ -68,12 +68,15 @@ Convert a volume for the Kindle 11 screen:
 mangapress "Volume 1.cbz" --profile K11 --format epub --output "Books/Volume 1.epub"
 ```
 
-Create the `Books` folder first when specifying a file inside it. Input can be a CBZ, a folder
+Missing output folders are created automatically. Input can be a CBZ, a folder
 of images, or a folder containing chapter subfolders. CBR, CB7, EPUB, and PDF input are not
 supported.
 
 Use `--output` for a file or directory. Without it, output is written beside the input; a Kobo
 profile's EPUB uses the `.kepub.epub` extension. Add `--nokepub` for a plain `.epub`.
+Derived filenames follow the source, not the book title; folders keep dots in their names.
+Existing files are never replaced, even with an explicit output file: a suffix such as
+` (mangapress)` is added instead, and the command reports the path used.
 Choose a format supported by your reading app: a Kindle profile sets screen dimensions but
 does not create MOBI or AZW3 files for the Kindle's native reader.
 
@@ -84,7 +87,9 @@ mangapress --list-profiles
 mangapress "Volume 1.cbz" --profile K11 --format epub --dry-run
 ```
 
-`--dry-run` inspects the book without processing pages or writing output. Run
+`--dry-run` inspects the book and checks the destination without creating anything. It cannot
+guarantee future write permissions or free space. A real run checks write access before page
+processing, then stages and synchronizes the completed book before publishing it. Run
 `mangapress --help` for the full list of options and defaults.
 
 One input file or uncompressed CBZ entry is limited to 256 MiB; this is not a limit on the

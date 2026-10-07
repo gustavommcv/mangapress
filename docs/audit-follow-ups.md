@@ -1,13 +1,13 @@
 # October 2026 audit follow-ups
 
 The [audit](audit-2026-10.md) is evidence at its stated snapshot, not a list of current defects.
-Each topic has regression tests and a separate PR. Merging requires maintainer approval and
+Each topic is handled in a separate PR with regression tests. Merging requires maintainer approval and
 verified remote checks for the exact commit, as described in [CONTRIBUTING](../CONTRIBUTING.md).
 
 | Topic | Findings | Status |
 | --- | --- | --- |
 | Bounded input reads and image checks | 1, 2 | In progress; policy in [ADR 0015](adr/0015-bounded-input-reads.md) |
-| Output names, validation, and atomic writes | 3–6 | Not started |
+| Output names, validation, and atomic writes | 3–6 | In progress; policy in [ADR 0016](adr/0016-safe-output-planning-and-publication.md) |
 | Symbolic-link policy | 9 | Not started; maintainer decision before implementation |
 | Kindle DX and broader parity coverage | 7, 16 | Not started |
 | Dependency cleanup | 11 | Not started |

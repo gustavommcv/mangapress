@@ -50,6 +50,16 @@ output page counts, absolute output path, byte count, and `written: true`.
 format, not the file's extension: a Kobo profile's EPUB is named `.kepub.epub` and its format is
 still `epub`.
 
+Output names follow the source filename or whole folder name, not the resolved book title.
+An existing destination, including an explicit file, selects a numbered safe alternate; plans
+and results report the path actually chosen. Keep using `output_path`, not a reconstructed
+name. See [ADR 0016](adr/0016-safe-output-planning-and-publication.md).
+
+A dry-run checks names and existing ancestors without creating a directory, probe, or file.
+It does not guarantee future ACL access or free space. A real run creates missing parents
+and stages a private sibling file before processing pages. Publication never overwrites;
+a destination created after planning fails as `output_write_failed`, with no completed result.
+
 Page work may finish on different worker threads, but events are serialized. `sequence` and the
 page event's global `completed` value always increase by exactly one. A page event's `page` is its
 one-based position within the named chapter.
@@ -96,6 +106,8 @@ Version 1 issue codes are:
 | `spread_join_failed` | `inspect` | Two pages labelled as a spread could not be joined into one image |
 | `metadata_parse_failed` | `metadata` | ComicInfo.xml is invalid or unreadable |
 | `output_collision` | `plan` | The chosen output would overwrite the input; a safe name is used |
+| `output_exists` | `plan` | Another entry occupies the chosen output; a safe name is used |
+| `output_plan_failed` | `plan` | The destination has an invalid name/parent or could not be staged before processing |
 | `output_directory_create_failed` | `write` | The output directory could not be created |
 | `page_processing_failed` | `process` | A named page in a named chapter failed conversion |
 | `webtoon_split_failed` | `process` | A chapter's strips could not be cut into pages |

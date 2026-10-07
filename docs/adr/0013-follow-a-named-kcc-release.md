@@ -71,7 +71,8 @@ deliberate, and is also written down where the code makes it:
 | One input file or uncompressed archive entry is limited to 256 MiB | Bounds an individual read; not a book-size limit. The pixel-area check retains KCC's larger page limit (ADR 0015). |
 | Chapters are keyed by their full path | Fixes a title collision in KCC (ADR 0005). |
 | A cover in the `Covers` folder can be matched by name; `Covers` is not counted as a book | Position alone hands a book without a cover its neighbor's, and KCC counts the folder itself when the input is a folder. |
-| An output that would overwrite its input is named `… (mangapress)` | KCC's `_kccN`, under this tool's name. |
+| An existing output is preserved with `… (mangapress)`, then numbered suffixes; `.kepub.epub` stays intact | KCC's non-overwriting rule, under this tool's name, without duplicating the compound extension (ADR 0016). |
+| Generated output names are made portable and fit a 255-byte UTF-8 component budget; invalid explicit names fail early | Avoids reserved Windows names and unwriteable outputs. Book metadata is not changed (ADR 0016). |
 | `--croppingminimum` is a percentage (`90`); KCC's is a fraction (`0.9`) | The same threshold, written the way `--preservemargin` already is in both tools. The option names need not be KCC's twin where the behavior is. |
 | Pages labelled as the halves of a spread (`--spreads`, or KCC's `<input>.json`) are joined without flattening the book; KCC drops every chapter when it joins | The table of contents survives. For two pages of the same size the joined image is KCC's, pixel for pixel. |
 | Two labelled pages of different sizes are placed side by side whole; a label that cannot be used is skipped with a warning | KCC cuts or overlaps the pages in the first case and stops with an error in the second. |

@@ -127,7 +127,7 @@ jobs:
 
       - name: Checksums
         working-directory: dist
-        run: sha256sum * > checksums.txt
+        run: sha256sum -- mangapress-* > checksums.txt
 
       - name: Create release
         env:

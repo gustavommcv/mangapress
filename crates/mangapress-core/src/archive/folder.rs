@@ -199,10 +199,21 @@ mod tests {
         let private = outside.join("private.png");
         std::fs::write(&private, b"private image").unwrap();
         links::file_link(&private, &root.join("a.png")).unwrap();
-        links::file_link(Path::new("../book-other/private.png"), &root.join("b.png")).unwrap();
+        // Windows preserves the symlink target string. Build native separators
+        // rather than accidentally creating a broken POSIX-style relative link.
+        let relative_target = Path::new("..").join("book-other").join("private.png");
+        links::file_link(&relative_target, &root.join("b.png")).unwrap();
         links::file_link(&root.join("a.png"), &root.join("c.png")).unwrap();
         links::directory_link(&outside, &root.join("door")).unwrap();
-        links::file_link(&root.join("door/private.png"), &root.join("d.png")).unwrap();
+        links::file_link(&root.join("door").join("private.png"), &root.join("d.png")).unwrap();
+        let expected_target = std::fs::canonicalize(&private).unwrap();
+        for name in ["a.png", "b.png", "c.png", "d.png"] {
+            assert_eq!(
+                std::fs::canonicalize(root.join(name)).unwrap(),
+                expected_target,
+                "{name} must be a genuine external-file fixture"
+            );
+        }
         let input = super::super::read_book(&root).unwrap();
         assert_eq!(input.entries.len(), 1);
         assert_eq!(input.entries[0].bytes, b"page");
@@ -216,10 +227,14 @@ mod tests {
             names,
             ["a.png", "b.png", "c.png", "d.png", "door"].map(PathBuf::from)
         );
-        assert!(input
-            .skipped_links
-            .iter()
-            .all(|link| link.reason == LinkSkipReason::OutsideInput));
+        assert!(
+            input
+                .skipped_links
+                .iter()
+                .all(|link| link.reason == LinkSkipReason::OutsideInput),
+            "{:?}",
+            input.skipped_links
+        );
         assert_eq!(
             read_folder(&root).unwrap().len(),
             1,

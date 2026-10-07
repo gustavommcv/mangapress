@@ -42,7 +42,8 @@ on Windows, restart your terminal after installation. The Unix install folder ca
 Each release includes `checksums.txt` for manual verification. Archives contain the executable,
 license texts, and [third-party notices](THIRD-PARTY-NOTICES.md).
 
-With a Rust toolchain installed, you can also build the current development version:
+With the Rust version listed in [contributor setup](CONTRIBUTING.md#setup-and-checks),
+you can also build the current development version:
 
 ```sh
 cargo install --git https://github.com/gustavommcv/mangapress --locked mangapress-cli

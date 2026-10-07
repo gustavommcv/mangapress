@@ -6,7 +6,8 @@ separately from `cargo test`.
 
 ## Run the comparison
 
-You need a Rust toolchain and Python 3. From the mangapress repository root, install the
+You need the [repository's Rust toolchain](../../CONTRIBUTING.md#setup-and-checks) and Python 3.
+From the mangapress repository root, install the
 development-only comparison dependencies and clone the reference into a separate folder.
 Use a virtual environment if you do not want to change your Python installation:
 

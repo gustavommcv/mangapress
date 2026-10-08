@@ -55,6 +55,11 @@ The comparison workflow runs the full Kindle 11 matrix, representative device ch
 small CLI-to-book cases for relevant PRs; release checks add the extended cases.
 Verify that run for the exact commit as well as the three-platform Rust CI.
 
+For EPUB-output changes, also run the independent [complete-book conformance gate](tools/epubcheck/README.md).
+It uses synthetic CLI output and a pinned EPUBCheck distribution, and requires Java only
+for this development check. Verify its remote run for the same commit; parity does not
+replace conformance, and conformance does not prove reader appearance.
+
 KCC 12.0.0 is the current reference. Preserve the implementation and licensing boundary in
 [ADR 0007](docs/adr/0007-gplv3-boundary-kcc-image-rs.md), and follow
 [ADR 0013](docs/adr/0013-follow-a-named-kcc-release.md) when considering differences or a new

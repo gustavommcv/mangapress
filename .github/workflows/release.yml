@@ -39,8 +39,12 @@ jobs:
     with:
       extended: true
 
+  epub-conformance:
+    needs: validate-tag
+    uses: ./.github/workflows/epubcheck.yml
+
   build:
-    needs: [checks, parity]
+    needs: [checks, parity, epub-conformance]
     strategy:
       fail-fast: false
       matrix:

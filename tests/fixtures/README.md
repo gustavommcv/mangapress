@@ -7,6 +7,10 @@ Real manga or comic pages used for local investigation belong in the ignored `re
 Do not commit them or make automated tests depend on them; reproduce the relevant properties
 with a synthetic fixture instead.
 
+`tools/book_fixtures.py` generates the small chapter folders shared by KCC book comparisons
+and the [independent EPUBCheck gate](../../tools/epubcheck/README.md). Their generated inputs,
+books and diagnostic reports stay in ignored `target/`, not in the source tree.
+
 `folder_links.rs` shares native link helpers between library and CLI tests. Symbolic-link
 fixtures can be unavailable on Windows without the required privilege; only that specific
 OS error permits a skip. Linux/macOS link tests and Windows junction tests must execute.

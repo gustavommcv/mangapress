@@ -103,7 +103,9 @@ The centered-property correction is prepared for review in
 [ADR 0018](adr/0018-standard-centered-spine-property.md), with exact-spelling and CLI
 regressions; page-side meaning remains compared with KCC.
 
-The next separate topics are pinned EPUBCheck integration, targeted complete-book coverage
-across device families and custom dimensions, then documentation/version preparation.
-EPUBCheck is not yet a CI gate. Reader appearance and parity are separate checks; neither
+The [pinned EPUBCheck gate](../tools/epubcheck/README.md) is prepared for review, with four
+fresh complete-book cases, a broken-resource negative control, and a reusable PR/release
+workflow. It does not require KCC. The next separate topics are broader complete-book
+coverage across device families and custom dimensions, then documentation/version preparation.
+Reader appearance and parity are separate checks; neither
 a valid EPUB nor matching KCC proves the book's rendering on a physical device.

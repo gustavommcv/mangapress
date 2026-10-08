@@ -98,6 +98,24 @@ SCENARIOS = [
      ["--splitter=both", "--forcecolor", "--colorautocontrast", "--autolevel"]),
     ("colour output, rainbow eraser", "colour", ["-r", "2", "--forcecolor", "--eraserainbow"], ["--splitter=both", "--forcecolor", "--eraserainbow"]),
     ("colour output, gamma 1.8", "colour", ["-r", "2", "--forcecolor", "-g", "1.8"], ["--splitter=both", "--forcecolor", "--gamma=1.8"]),
+    ("OTHER: odd custom dimensions, transparency and LTR", "edges", ["-c", "0", "--forcepng"],
+     ["--crop=disabled", "--forcepng", "--customwidth=127", "--customheight=193"],
+     ["-p", "OTHER", "-u", "-f", "EPUB", "--customwidth", "127", "--customheight", "193"], ["--upscale"]),
+    ("OTHER: crop cap boundaries", "crop_edges", ["-c", "1"],
+     ["--crop=margins", "--customwidth=128", "--customheight=192"],
+     ["-p", "OTHER", "-f", "EPUB", "--customwidth", "128", "--customheight", "192"], []),
+]
+
+EXTENDED_SCENARIOS = [
+    ("OTHER: odd custom dimensions, transparency and RTL", "edges", ["-m", "-c", "0", "--forcepng"],
+     ["--manga", "--crop=disabled", "--forcepng", "--customwidth=127", "--customheight=193"],
+     ["-p", "OTHER", "-u", "-f", "EPUB", "--customwidth", "127", "--customheight", "193"], ["--upscale"]),
+    ("OTHER: odd dimensions, color PNG and rotated copy first", "edges", ["-c", "0", "-r", "2", "--rotatefirst", "--forcepng", "--forcecolor", "--force-png-rgb"],
+     ["--crop=disabled", "--splitter=both", "--rotatefirst", "--forcepng", "--forcecolor", "--force-png-rgb", "--customwidth=127", "--customheight=193"],
+     ["-p", "OTHER", "-u", "-f", "EPUB", "--customwidth", "127", "--customheight", "193"], ["--upscale"]),
+    ("OTHER: crop minimum at 81%", "crop_edges", ["-c", "1", "--cm", "0.81"],
+     ["--crop=margins", "--croppingminimum=81", "--customwidth=128", "--customheight=192"],
+     ["-p", "OTHER", "-f", "EPUB", "--customwidth", "128", "--customheight", "192"], []),
 ]
 
 # A small cross-device check of geometry and grayscale/color processing.
@@ -138,8 +156,8 @@ def matches(name, filters):
     return not filters or any(text in name for text in filters)
 
 
-def select_scenarios(filters=None, smoke=False):
-    return [scenario for scenario in SCENARIOS
+def select_scenarios(filters=None, smoke=False, extended=False):
+    return [scenario for scenario in SCENARIOS + (EXTENDED_SCENARIOS if extended else [])
             if (scenario[0] in SMOKE_SCENARIOS if smoke else matches(scenario[0], filters))]
 
 
@@ -160,6 +178,16 @@ def dither_inputs(directory):
     if not paths:
         raise SystemExit("dither comparison has no reference pages")
     return paths
+
+
+def comparison_image(path):
+    with Image.open(path) as image:
+        # A grayscale palette can decode as RGB. Check its actual channels
+        # rather than rejecting a lossless encoding of the same gray pixels.
+        rgb = image.convert("RGB")
+        values = np.asarray(rgb)
+        gray = np.array_equal(values[:, :, 0], values[:, :, 1]) and np.array_equal(values[:, :, 1], values[:, :, 2])
+        return rgb.convert("L") if gray else rgb
 
 
 def compare_pages(report, name, files, kcc_dir, dump_dir):
@@ -189,8 +217,11 @@ def compare_pages(report, name, files, kcc_dir, dump_dir):
             if a["black_background"] != b["black_background"]:
                 report.fail(where, f"black page background KCC {a['black_background']}, mangapress {b['black_background']}")
                 continue
-            x = Image.open(os.path.join(kcc_dir, a["file"]))
-            y = Image.open(os.path.join(dump_dir, b["file"]))
+            x = comparison_image(os.path.join(kcc_dir, a["file"]))
+            y = comparison_image(os.path.join(dump_dir, b["file"]))
+            if list(x.size) != a["size"] or list(y.size) != b["size"]:
+                report.fail(where, "encoded image dimensions disagree with the manifest")
+                continue
             if x.mode != y.mode:
                 report.fail(where, f"KCC wrote {x.mode}, mangapress {y.mode}")
                 continue
@@ -210,6 +241,7 @@ def main():
     parser.add_argument("--pages", help="a folder of your own pages to add to the default scenario (they stay local)")
     parser.add_argument("--work", default=os.path.join(REPO, "target", "parity"), help="where to write everything")
     parser.add_argument("--profile", default=DEFAULT_PROFILE, help="device profile code (default: K11)")
+    parser.add_argument("--extended", action="store_true", help="include pre-release boundary/option interactions")
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--only", action="append", help="run scenarios containing this text; repeat to select more")
     selection.add_argument("--smoke", action="store_true", help="run only default, CBZ padding, and color-output scenarios")
@@ -222,7 +254,7 @@ def main():
     profile_data = kcc_image.ProfileData.Profiles.get(args.profile)
     if not profile_data or not all(profile_data[1]):
         parser.error(f"{args.profile!r} is not a device profile with a built-in resolution")
-    selected = select_scenarios(args.only, args.smoke)
+    selected = select_scenarios(args.only, args.smoke, args.extended)
     check_dither = not args.smoke and matches("dither", args.only)
     check_webtoon = not args.smoke and matches("webtoon", args.only)
     if not selected and not check_dither and not check_webtoon:
@@ -238,7 +270,7 @@ def main():
     corpus = make_corpus.write(os.path.join(work, "corpus"))
     scenarios = list(selected)
     if args.pages:
-        extensions = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+        extensions = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
         corpus["yours"] = sorted(os.path.join(root, name) for root, _, names in os.walk(os.path.abspath(args.pages))
                                  for name in names if name.lower().endswith(extensions))
         extras = [("your pages, default options", "yours", *SPLIT_BOTH),

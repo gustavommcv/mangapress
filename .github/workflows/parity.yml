@@ -10,6 +10,7 @@ on:
       - 'rust-toolchain.toml'
       - 'tools/parity/**'
       - '.github/workflows/parity.yml'
+      - '.github/workflows/release.yml'
   pull_request:
     paths:
       - 'crates/**'
@@ -18,8 +19,18 @@ on:
       - 'rust-toolchain.toml'
       - 'tools/parity/**'
       - '.github/workflows/parity.yml'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
+    inputs:
+      extended:
+        description: Include pre-release boundary, option interaction, and book checks
+        type: boolean
+        default: false
   workflow_call:
+    inputs:
+      extended:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,6 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: '1'
+      EXTENDED: ${{ inputs.extended || false }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,7 +66,15 @@ jobs:
           path: target/kcc-reference
           persist-credentials: false
       - name: Compare the full Kindle 11 matrix
-        run: python tools/parity/parity.py --kcc target/kcc-reference --work target/parity/K11
+        run: |
+          args=()
+          if [[ "$EXTENDED" == "true" ]]; then args+=(--extended); fi
+          python tools/parity/parity.py --kcc target/kcc-reference --work target/parity/K11 "${args[@]}"
+      - name: Compare actual EPUB and CBZ books
+        run: |
+          args=()
+          if [[ "$EXTENDED" == "true" ]]; then args+=(--extended); fi
+          python tools/parity/books.py --kcc target/kcc-reference "${args[@]}"
       - name: Compare representative device profiles
         run: |
           for profile in K1 K2 KDX KS3 KCS KoLC RmkPPMove; do

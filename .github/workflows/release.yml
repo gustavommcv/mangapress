@@ -36,6 +36,8 @@ jobs:
   parity:
     needs: validate-tag
     uses: ./.github/workflows/parity.yml
+    with:
+      extended: true
 
   build:
     needs: [checks, parity]

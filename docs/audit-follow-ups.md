@@ -15,7 +15,7 @@ verified remote checks for the exact commit, as described in [CONTRIBUTING](../C
 | CI and release checks | 13 | Implemented in [PR #18](https://github.com/gustavommcv/mangapress/pull/18); pinned tools/actions, locked checks, advisory checks, and shared release gates |
 | Installer checksums and version selection | 13 | Implemented in [PR #19](https://github.com/gustavommcv/mangapress/pull/19); version-pinned downloads, checksum checks, and installed license notices |
 | CLI diagnostics, help, and documentation | 8, 10, 15 | Implemented in [PR #20](https://github.com/gustavommcv/mangapress/pull/20); quiet human pipe closure, source-page diagnostics, grouped help, and documented streams/exit codes |
-| Final pre-release parity review | Follow-up to 16 | Prepared for review: [coverage inventory](../tools/parity/coverage.md), boundary cases and real CLI-to-book comparisons; extended release gate |
+| Final pre-release parity review | Follow-up to 16 | Implemented in [PR #21](https://github.com/gustavommcv/mangapress/pull/21): [coverage inventory](../tools/parity/coverage.md), boundary cases and real CLI-to-book comparisons; extended release gate |
 
 Finding 18's failure-path tests accompany the relevant fixes. The allocator/distribution
 benchmark (14) and the large orchestration refactor (17) are deferred, not resolved.
@@ -99,14 +99,16 @@ differences rather than changing output merely to make a comparison pass.
 
 Local EPUBCheck 5.4.0 validation of the retained synthetic books found an undefined
 `page-spread-center` property in both mangapress and KCC 12.0.0's Kindle output.
-The centered-property correction is prepared for review in
+The centered-property correction is implemented in
+[PR #22](https://github.com/gustavommcv/mangapress/pull/22) under accepted
 [ADR 0018](adr/0018-standard-centered-spine-property.md), with exact-spelling and CLI
 regressions; page-side meaning remains compared with KCC.
 
 The [pinned EPUBCheck gate](../tools/epubcheck/README.md) began with four fresh complete-book
 cases in [PR #23](https://github.com/gustavommcv/mangapress/pull/23), a broken-resource negative
-control, and a reusable PR/release workflow. The selected complete-book follow-up now contains
-19 positive cases across device families/custom dimensions, nested and bookmark navigation,
+control, and a reusable PR/release workflow. The selected complete-book follow-up in
+[PR #26](https://github.com/gustavommcv/mangapress/pull/26) contains 19 positive cases across
+device families/custom dimensions, nested and bookmark navigation,
 metadata/collections, covers and codecs, plus two BMP passthrough refusal controls. Intended
 content and JSON plan/result contracts are checked separately from format conformance.
 It reuses the fixture and semantic EPUB reader; no additional dependency is needed.
@@ -118,7 +120,10 @@ That expansion exposed two real output defects, handled separately:
 - [PR #25](https://github.com/gustavommcv/mangapress/pull/25): BMP is refused only for EPUB
   passthrough; normal conversion stays available, and CBZ retains correctly named BMP bytes.
 
-These pre-release PRs still require maintainer review and merge approval. The next topics are
-documentation/version preparation and a small reader smoke test before an explicitly approved
-tag. Reader appearance and parity are separate checks; neither
-a valid EPUB nor matching KCC proves the book's rendering on a physical device.
+The parity and EPUB follow-ups in PRs #21–#26 have been merged with maintainer approval.
+Documentation and the 0.7.3 package version are
+[prepared, not released](releases.md#073-preparation-not-released).
+A Linux KOReader smoke test is pending; its environment, actual rendering and navigation
+results must be recorded before an explicitly approved tag. Reader appearance and parity
+are separate checks; neither a valid EPUB nor matching KCC proves rendering on a physical
+device, and a desktop reader test does not establish that result either.

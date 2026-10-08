@@ -4,7 +4,7 @@ Date: 2026-10-07
 
 ## Status
 
-Proposed; awaiting maintainer review.
+Accepted on 2026-10-08 with maintainer approval to merge PR #22.
 
 ## Context
 

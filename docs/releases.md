@@ -14,6 +14,52 @@ Only the publication job has repository write permission. It downloads the `mang
 package artifacts, not the separate CI license reports, generates checksums, and requires
 the release tag to exist. Archive names and installer entry points are unchanged.
 
+## 0.7.3 preparation (not released)
+
+This patch candidate contains the October audit fixes and the EPUB follow-ups since 0.7.2.
+It adds no new CLI flags or output formats; the JSON protocol remains version 1.
+The audit and pre-release PRs are tracked in [audit follow-ups](audit-follow-ups.md).
+
+Draft release highlights:
+
+- Preserve existing outputs, validate portable output names, and stage completed writes.
+- Bound individual input reads, check image dimensions before decoding, and keep folder
+  links inside the selected input. These checks are not a whole-process memory limit.
+- Match KCC 12.0.0's format-specific Kindle DX target and Scribe EPUB width cap.
+- Correct centered EPUB spine properties and nested NCX ordering. BMP input still works
+  with processing; EPUB with `--noprocessing` now rejects BMP with a recovery message.
+- Improve page-failure diagnostics, terminal help and pipe handling. Installers verify
+  versioned downloads against release checksums and retain included license notices.
+- Expand selected KCC comparisons and add a pinned EPUBCheck gate for 19 complete synthetic
+  books, content assertions and failure controls. This is not exhaustive reader coverage.
+
+The package version is prepared, not published. README installer examples intentionally name
+the available 0.7.2 release. A reader smoke test and verification of the final release commit's
+checks remain necessary before a separately approved tag.
+Do not update Mangabound's toolchain pin until verified release assets are available.
+
+### Reader smoke test
+
+Use the exact candidate commit in an isolated checkout, build the native CLI with
+`cargo build --release --locked -p mangapress-cli`, and record its `--version`. Run the
+[complete-book gate](../tools/epubcheck/README.md) to generate fresh books; retain its
+printed run directory, logs and `summary.json`. Do not open the intentionally broken
+`missing-resource.epub` as a positive case.
+
+In KOReader, inspect the ordinary JPEG and centered PNG books, nested volumes, bookmarks
+after RTL splitting, color PNG, mixed-codec passthrough, Unicode/overridden metadata,
+external cover, and a large Scribe case. Check actual page rendering, first/next/last pages,
+TOC labels and destinations, cover and metadata. Use `cases.py` for the expected page order
+and targets; XML assertions alone do not demonstrate reader behavior.
+
+Record the Linux distribution/architecture, KOReader version and build, window or screen
+dimensions, relevant reader settings, observed results and screenshots. Preserve personal
+books and settings. Classify failures separately from unsupported reader features and
+blocked checks; ADR 0013 already records KOReader's handling of spine-placement properties.
+Small fixtures do not assess manga quality, and full-size cases stretch synthetic patterns
+only to exercise dimensions. If the test uses desktop KOReader, state that clearly: it
+does not verify a physical Kindle/Kobo, e-ink refresh or device performance.
+
 ## Maintenance
 
 - Rust 1.98.1 is the tested minimum and release compiler. The repository toolchain file is

@@ -121,12 +121,12 @@ That expansion exposed two real output defects, handled separately:
   passthrough; normal conversion stays available, and CBZ retains correctly named BMP bytes.
 
 The parity and EPUB follow-ups in PRs #21–#26 have been merged with maintainer approval.
-Documentation and the 0.7.3 package version are
-[prepared, not released](releases.md#073-preparation-not-released).
+The audit and pre-release fixes are [released in 0.7.3](releases.md#073-2026-10-08).
 The [Linux desktop KOReader smoke test](releases.md#reader-smoke-test-result-2026-10-08)
 passed its reader scenarios on candidate `5416bee`, with its environment and limits recorded.
-It also exposed a Unix output-permission regression, corrected through the existing staging
-API with CLI tests for all output formats and restrictive masks. Final-commit checks and an
-explicitly approved tag are still required. Reader appearance and parity are separate checks;
+It also exposed a Unix output-permission regression, corrected in
+[PR #28](https://github.com/gustavommcv/mangapress/pull/28) through the existing staging
+API with CLI tests for all output formats and restrictive masks. The release workflow passed
+its checks on the tagged commit before publication. Reader appearance and parity are separate checks;
 neither a valid EPUB nor matching KCC proves rendering on a physical device, and a desktop
 reader test does not establish that result either.

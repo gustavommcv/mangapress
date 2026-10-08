@@ -71,7 +71,8 @@ chapter folders. They read each generated archive and compare:
 
 - ordered page images, geometry, grayscale/color classification, and decoded pixels;
 - EPUB title, creators, language, summary, reading direction, layout metadata, and page sides;
-- NCX and EPUB3 table-of-contents labels and their actual spine-page targets;
+- NCX and EPUB3 table-of-contents labels and their actual spine-page targets; the shared
+  reader also requires both navigation trees to agree;
 - the declared cover and its processed pixels;
 - PNG bit depth/color type and JPEG quantization tables, not identical compression bytes;
 - exact source-image bytes in passthrough mode, retained CBZ ComicInfo, and unchanged inputs.
@@ -142,7 +143,8 @@ Changing `rust-toolchain.toml` triggers the PR/main comparison as well.
 ## Files
 
 - [parity.py](parity.py): scenarios and comparisons.
-- [books.py](books.py): actual CLI-to-book comparisons and semantic archive inspection.
+- [books.py](books.py): actual CLI-to-book comparisons.
+- [epub_book.py](../epub_book.py): shared semantic EPUB inspection, also used by the conformance gate.
 - [kcc_oracle.py](kcc_oracle.py): calls KCC from its checkout.
 - [make_corpus.py](make_corpus.py): generates the test images.
 - [parity_dump.rs](../../crates/mangapress-core/examples/parity_dump.rs): runs mangapress's pipeline

@@ -28,20 +28,46 @@ python tools/epubcheck/check.py --archive /path/to/epubcheck-5.4.0.zip
 `--java` accepts a Java executable path. `--work` changes the artifact root; the default
 is ignored `target/epubcheck/books/`. Every run creates a fresh directory, with named cases
 and exact expected output paths. Old files or an empty case list cannot satisfy the gate.
-Books, CLI logs, checker JSON/text reports, and `summary.json` remain there for diagnosis.
-A download, build, tool, output, report or validation failure exits nonzero.
+Books, dry-run/conversion logs, checker JSON/text reports, and `summary.json` remain there
+for diagnosis. A download, build, tool, output, content, report or validation failure exits nonzero.
 
-## Initial coverage and failure policy
+## Selected complete-book coverage
 
-| Case | Generated output |
+| Cases | Generated output and assertions |
 | --- | --- |
-| `kindle-jpeg` | Kindle 11, profile-default grayscale JPEG, ComicInfo and flat chapter navigation |
-| `kindle-centered-png` | Kindle 11 PNG with `--onepagelandscape` |
-| `kobo-color-png` | Kobo Libra Colour with color RGB PNG |
-| `custom-rotated-png` | Odd custom 127 × 193 target and a rotated double-page spread |
+| `kindle-jpeg`, `kindle-centered-png` | Kindle 11 (1072 × 1448 target), default grayscale JPEG quality 85, centered PNG, flat chapters |
+| `kobo-color-png` | Kobo Libra Colour (1264 × 1680 target), color RGB PNG and series collection |
+| `custom-rotated-png`, `custom-even-size` | Odd 127 × 193 target with rotated spread; even 128 × 192 full-size PNG; no Kindle metadata |
+| `kindle-four-tone`, `kindle-fifteen-tone` | K1/K2 full-size 600 × 670 PNG and 4/15-shade limits |
+| `kindle-dx-bmp-input` | BMP input processed into full-size 824 × 1000 PNG, not the DX's taller CBZ target |
+| `scribe-capped`, `scribe-color-capped` | KS3/KSCS full-size 1920 × 2648 PNG and matching Kindle resolution metadata |
+| `scribe-custom-uncapped` | KS3 width override: full-size 1986 × 2648 PNG without Kindle resolution metadata |
+| `remarkable-full-size` | reMarkable Paper Pro full-size 1620 × 2160 PNG |
+| `colorsoft-default-jpeg` | Full-size 1272 × 1696 color JPEG at profile-default quality 90 |
+| `nested-volumes-cbz` | Reverse-ordered CBZ, two volumes, repeated chapter basename, exact two-level NCX/nav targets and naturally ordered distinct pixels |
+| `bookmarks-after-rtl-split` | ComicInfo bookmark targets after a spread becomes two pages; RTL progression/sides; automatic cover retains the whole source spread |
+| `unicode-collection`, `explicit-metadata-and-direction` | Unicode/XML escaping, deduplicated authors, combined title and series refinements; CLI title/author/language overrides; RTL + inverted direction + shifted sides |
+| `mixed-codec-passthrough-cbz` | Naturally ordered JPEG/GIF/WebP/PNG bytes retained exactly, including PNG/WebP alpha, from CBZ |
+| `external-color-cover` | Explicit cover selection verified by size and its distinct color |
 
-These use the same small chapter fixture as the actual CLI-to-book KCC checks, moved
-unchanged to `tools/book_fixtures.py`. They do not compare KCC or assert pixel parity.
+All 19 positive cases run on relevant PRs, `main`, manual runs and release gates; there is no
+separate extended mode here. They reuse `tools/book_fixtures.py` and add small scenario-specific
+inputs in `cases.py`. Full-size cases enlarge one tiny synthetic page with `--stretch` to exercise
+real device dimensions, not to recommend stretching manga. Ordinary small-page cases retain their
+own image dimensions; a device target is not a promise that every encoded page fills it.
+
+Each case checks the dry-run and real JSON plan/result against independently specified target
+dimensions, output path and page counts. A dry run cannot write a book, and source files,
+ComicInfo, external covers and CBZ archives must remain unchanged. The generated archive is read
+with the same stdlib-only `tools/epub_book.py` used by parity. Both NCX and EPUB3 navigation must
+agree as trees, including each link's actual spine-page index. Assertions check intended metadata,
+reading direction, page placement, decoded image geometry, every XHTML image's intrinsic size
+(including Kindle's hidden copy), viewport, codec, selected JPEG quantization tables, cover and
+series refinements. Nested ordering uses exact synthetic pixels with contrast/gamma/quantization
+disabled; passthrough uses exact source bytes. These are not KCC pixel-parity checks.
+
+## Failure policy and limits
+
 The checker receives complete EPUBs, not isolated OPF/XHTML files, with JSON output,
 unlimited message occurrences, and `--failonwarnings`. Zero errors, fatal errors and
 warnings are required; there is no ignore list or changed message severity.
@@ -51,12 +77,24 @@ wrong-version, unrelated or pre-existing reports cannot count as a pass.
 A separate negative control removes one declared page image from a copy of a validated
 book. The original remains intact. The checker must exit with failure and identify the
 missing resource (`RSC-001`); an unrelated error or a tool crash is not accepted.
-Unit tests exercise the gate's own failure handling, but do not substitute for this real run.
+Two additional CLI controls require BMP passthrough into EPUB to fail, for folder and CBZ input,
+with the specific processing error and actionable explanation, no successful result and no book.
+BMP's normal processed path remains a positive case. These intentional CLI refusals are not books
+accepted by EPUBCheck, and are not counted in the 19 validated books.
 
-This first gate covers selected serialization paths, not every device, flag, codec or
-combination. Broader complete-book cases are the next focused follow-up. EPUBCheck checks
-format conformance, not processing geometry, KCC compatibility, visual quality, accessibility
-completeness, performance or physical-device behavior. Keep those checks separate.
+Unit tests also deliberately change targets, counts, metadata, tree structure, bookmark positions,
+viewport/image dimensions, codecs, JPEG tables, colors, covers, collection refinements and source
+bytes. They exercise the assertions and failure handling, but do not substitute for the real CLI
+and checker run.
+
+The matrix is selected, not every device, flag or combination. Gaps include smart-cover/fill
+thresholds, Covers-folder selection, labelled joins, webtoon books, and arbitrary color profiles
+or corrupt inputs; relevant Rust/parity tests cover parts of those paths.
+
+EPUBCheck checks format conformance, not processing geometry or reader appearance. The separate
+content assertions cover listed geometry/metadata contracts, not KCC compatibility, visual
+quality, accessibility completeness, performance or physical-device behavior. Keep those checks
+separate, including a reader smoke test before release.
 
 ## Automatic checks and maintenance
 

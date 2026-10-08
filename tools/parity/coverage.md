@@ -8,6 +8,10 @@ See [how to run the checks](README.md) and [ADR 0013](../../docs/adr/0013-follow
 **Rust** means mangapress has regression tests but that behavior is not compared to a live KCC run.
 **Extended** cases run before release or through the manual workflow's `extended` input.
 
+The independent [complete-EPUB gate](../epubcheck/README.md) also checks selected device geometry,
+nested navigation, bookmark targets, collection metadata and external covers. Those checks do
+not turn the Rust-only or excluded entries below into direct KCC comparisons.
+
 | Options / behavior | Direct comparison | Other coverage / limits |
 | --- | --- | --- |
 | `--profile`, `--format` | Full K11 page matrix; seven representative profiles; EPUB/CBZ books | Rust device-resolution tests also cover PDF plans. Not every profile/format pairing. Auto-format differences are deliberate. |

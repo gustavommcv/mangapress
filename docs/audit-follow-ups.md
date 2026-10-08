@@ -103,9 +103,22 @@ The centered-property correction is prepared for review in
 [ADR 0018](adr/0018-standard-centered-spine-property.md), with exact-spelling and CLI
 regressions; page-side meaning remains compared with KCC.
 
-The [pinned EPUBCheck gate](../tools/epubcheck/README.md) is prepared for review, with four
-fresh complete-book cases, a broken-resource negative control, and a reusable PR/release
-workflow. It does not require KCC. The next separate topics are broader complete-book
-coverage across device families and custom dimensions, then documentation/version preparation.
-Reader appearance and parity are separate checks; neither
+The [pinned EPUBCheck gate](../tools/epubcheck/README.md) began with four fresh complete-book
+cases in [PR #23](https://github.com/gustavommcv/mangapress/pull/23), a broken-resource negative
+control, and a reusable PR/release workflow. The selected complete-book follow-up now contains
+19 positive cases across device families/custom dimensions, nested and bookmark navigation,
+metadata/collections, covers and codecs, plus two BMP passthrough refusal controls. Intended
+content and JSON plan/result contracts are checked separately from format conformance.
+It reuses the fixture and semantic EPUB reader; no additional dependency is needed.
+
+That expansion exposed two real output defects, handled separately:
+
+- [PR #24](https://github.com/gustavommcv/mangapress/pull/24): NCX entries sharing a destination
+  share `playOrder`, with unique IDs and an accurate nested depth.
+- [PR #25](https://github.com/gustavommcv/mangapress/pull/25): BMP is refused only for EPUB
+  passthrough; normal conversion stays available, and CBZ retains correctly named BMP bytes.
+
+These pre-release PRs still require maintainer review and merge approval. The next topics are
+documentation/version preparation and a small reader smoke test before an explicitly approved
+tag. Reader appearance and parity are separate checks; neither
 a valid EPUB nor matching KCC proves the book's rendering on a physical device.

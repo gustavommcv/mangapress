@@ -140,6 +140,26 @@ class ArchiveTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.read()
 
+    def test_nested_navigation_preserves_parent_and_child_with_the_same_target(self):
+        self.members["Book/toc.ncx"] = '''<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
+<navMap><navPoint><navLabel><text>Volume</text></navLabel><content src="Text/page.xhtml"/>
+<navPoint><navLabel><text>Chapter</text></navLabel><content src="Text/page.xhtml"/></navPoint>
+</navPoint></navMap></ncx>'''
+        self.members["Book/nav.xhtml"] = '''<html xmlns="http://www.w3.org/1999/xhtml"
+xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol>
+<li><a href="Text/page.xhtml">Volume</a><ol><li><a href="Text/page.xhtml">Chapter</a></li></ol></li>
+</ol></nav></body></html>'''
+        book = self.read()
+        self.assertEqual(book["toc"], (("Volume", 0, (("Chapter", 0, ()),)),))
+        self.assertEqual(book["navigation"]["ncx"], (("Volume", 0), ("Chapter", 0)))
+        # The labels and targets are still identical after flattening. Only
+        # keeping the tree can detect a lost parent/child relationship.
+        self.members["Book/nav.xhtml"] = self.members["Book/nav.xhtml"].replace(
+            '<ol><li><a href="Text/page.xhtml">Chapter</a></li></ol></li>',
+            '</li><li><a href="Text/page.xhtml">Chapter</a></li>')
+        with self.assertRaisesRegex(ValueError, "navigation disagree"):
+            self.read()
+
     def test_empty_spine_or_missing_cover_fails(self):
         original = self.members["Book/content.opf"]
         for wrong in (original.replace('<itemref idref="p" properties="page-spread-left"/>', ""),

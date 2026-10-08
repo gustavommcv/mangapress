@@ -9,6 +9,7 @@ on:
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - 'tools/book_fixtures.py'
+      - 'tools/epub_book.py'
       - 'tools/book-fixtures-requirements.txt'
       - 'tools/epubcheck/**'
       - '.github/workflows/epubcheck.yml'
@@ -20,6 +21,7 @@ on:
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - 'tools/book_fixtures.py'
+      - 'tools/epub_book.py'
       - 'tools/book-fixtures-requirements.txt'
       - 'tools/epubcheck/**'
       - '.github/workflows/epubcheck.yml'
@@ -52,9 +54,9 @@ jobs:
           java-version: '21'
       - name: Install synthetic-fixture dependencies
         run: python -m pip install -r tools/book-fixtures-requirements.txt
-      - name: Check gate failure handling
+      - name: Check gate failure handling and semantic assertions
         run: python -m unittest discover -s tools/epubcheck -p 'test_*.py' -v
-      - name: Validate fresh EPUB books and the broken-resource control
+      - name: Validate complete EPUB content and conformance
         run: python tools/epubcheck/check.py
       - name: Retain failed books and checker reports
         if: failure()

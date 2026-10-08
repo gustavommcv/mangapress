@@ -1,7 +1,6 @@
 """Generate fresh CLI books and validate them with the pinned official EPUBCheck."""
 
 import argparse
-from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -16,31 +15,13 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-from book_fixtures import fixture
+from cases import CASES, Case, prepare_case, snapshot, verify_bmp_rejection, verify_book, verify_events
 
 VERSION = "5.4.0"
 URL = f"https://github.com/w3c/epubcheck/releases/download/v{VERSION}/epubcheck-{VERSION}.zip"
 SHA256 = "33350c61038e71dfb3d45a76aed04bf5481e6d5500cb780f6e98db8bbd15a28c"
 COUNTERS = ("nFatal", "nError", "nWarning")
 FAILURE_SEVERITIES = {"FATAL", "ERROR", "WARNING"}
-
-
-@dataclass(frozen=True)
-class Case:
-    name: str
-    profile: str = "K11"
-    flags: tuple = ()
-    colour: bool = False
-    jacket: bool = False
-
-
-CASES = (
-    Case("kindle-jpeg"),
-    Case("kindle-centered-png", flags=("--forcepng", "--onepagelandscape")),
-    Case("kobo-color-png", "KoLC", ("--forcepng", "--forcecolor", "--force-png-rgb"), colour=True),
-    Case("custom-rotated-png", "OTHER", ("--forcepng", "--customwidth", "127", "--customheight", "193",
-                                        "--splitter", "rotate"), jacket=True),
-)
 
 
 def prepare_tool(directory, archive=None):
@@ -150,27 +131,42 @@ def run_suite(binary, jar, directory, java, cases=CASES):
     for case in cases:
         case_dir = directory / case.name
         case_dir.mkdir()
-        source, book = case_dir / "Synthetic Book", case_dir / "book.epub"
+        book = case_dir / "book.epub"
         try:
-            fixture(source, colour=case.colour, jacket=case.jacket)
-            result = subprocess.run(
-                [str(binary), str(source), "--output", str(book), "--format", "epub",
-                 "--profile", case.profile, "--cropping", "disabled", "--quiet", *case.flags],
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-            )
-            (case_dir / "cli.log").write_text(
-                f"Exit status: {result.returncode}\n{result.stdout}\n{result.stderr}", encoding="utf-8"
-            )
-            if result.returncode != 0:
-                raise ValueError(f"mangapress exited with {result.returncode}; inspect cli.log")
-            require_clean(*check_book(jar, book, java))
-        except (OSError, ValueError, KeyError, zipfile.BadZipFile) as error:
+            source, extra, originals, unchanged = prepare_case(case_dir, case)
+            command = [str(binary), str(source), "--output", str(book), "--format", "epub",
+                       "--profile", case.profile, "--cropping", "disabled", "--json-events", *case.flags, *extra]
+            for dry_run in (True, False):
+                log = "plan.log" if dry_run else "cli.log"
+                result = subprocess.run(command + (["--dry-run"] if dry_run else []),
+                                        capture_output=True, text=True, encoding="utf-8", errors="strict")
+                (case_dir / log).write_text(
+                    f"Exit status: {result.returncode}\n{result.stdout}\n{result.stderr}", encoding="utf-8"
+                )
+                rejected = not dry_run and case.reject_bmp
+                if rejected:
+                    verify_bmp_rejection(result.returncode, result.stdout, result.stderr, book)
+                elif result.returncode != 0 or result.stderr:
+                    raise ValueError(f"mangapress failed: exit={result.returncode}; inspect {log}")
+                if dry_run and book.exists():
+                    raise ValueError("dry run unexpectedly wrote a book")
+                if not dry_run and not rejected and (not book.is_file() or book.stat().st_size == 0):
+                    raise ValueError("CLI did not produce a nonempty book")
+                if not rejected:
+                    verify_events(result.stdout, case, book, dry_run)
+                if snapshot(unchanged) != unchanged:
+                    raise ValueError("CLI changed an input file")
+            if not case.reject_bmp:
+                verify_book(book, case, originals)
+                require_clean(*check_book(jar, book, java))
+        except (OSError, ValueError, KeyError, StopIteration, AttributeError, ET.ParseError, zipfile.BadZipFile) as error:
             results.append({"case": case.name, "status": "failed", "reason": str(error)})
             print(f"FAIL {case.name}: {error}", flush=True)
         else:
-            clean_books.append(book)
+            if not case.reject_bmp:
+                clean_books.append(book)
             results.append({"case": case.name, "status": "passed"})
-            print(f"ok   {case.name}", flush=True)
+            print(f"ok   {case.name}" + (" (expected CLI rejection)" if case.reject_bmp else ""), flush=True)
     try:
         if not clean_books:
             raise ValueError("no validated book is available for the negative control")
@@ -206,7 +202,8 @@ def main():
         checked = run_suite(binary, jar, directory, args.java)
     except (OSError, ValueError, subprocess.CalledProcessError, zipfile.BadZipFile) as error:
         parser.exit(1, f"EPUB conformance checks could not complete: {error}; artifacts: {directory}\n")
-    print(f"EPUBCheck {VERSION}: {checked} fresh books passed; broken-resource control rejected")
+    print(f"EPUBCheck {VERSION}: {checked} fresh books passed; BMP passthrough refused for folder/CBZ; "
+          "broken-resource control rejected")
 
 
 if __name__ == "__main__":

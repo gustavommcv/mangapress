@@ -37,12 +37,33 @@ irm https://raw.githubusercontent.com/gustavommcv/mangapress/main/install.ps1 | 
 The scripts install the latest release to `~/.local/bin` on macOS/Linux or
 `%LOCALAPPDATA%\Programs\mangapress` on Windows. Follow the printed `PATH` instructions if needed;
 on Windows, restart your terminal after installation. The Unix install folder can be changed with
-`MANGAPRESS_INSTALL_DIR`.
+`MANGAPRESS_INSTALL_DIR`; the same variable also works on Windows.
 
-Each release includes `checksums.txt` for manual verification. Archives contain the executable,
-license texts, and [third-party notices](THIRD-PARTY-NOTICES.md).
+The installers resolve the release once, verify the selected package against that release's
+`checksums.txt`, and check the executable's version before replacing an installation. Missing
+checksums or failed verification stop installation. This checks download integrity, not signed
+authenticity: the package and checksums are published by the same repository.
+Archives contain the executable, license texts, and [third-party notices](THIRD-PARTY-NOTICES.md).
+The Unix installer keeps the included notices in `mangapress-licenses` inside the install folder;
+Windows keeps them beside the executable. Older releases without a checksum file must be installed
+manually rather than bypassing verification.
 
-With a Rust toolchain installed, you can also build the current development version:
+To select a published version, set `MANGAPRESS_VERSION` (with or without its `v` prefix):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/gustavommcv/mangapress/main/install.sh | MANGAPRESS_VERSION=v0.7.2 sh
+```
+
+```powershell
+$env:MANGAPRESS_VERSION = 'v0.7.2'
+irm https://raw.githubusercontent.com/gustavommcv/mangapress/main/install.ps1 | iex
+```
+
+Unset the variable or use `latest` to return to the latest release. For automated Windows
+installations that should not change the user `Path`, set `MANGAPRESS_NO_PATH_UPDATE=1`.
+
+With the Rust version listed in [contributor setup](CONTRIBUTING.md#setup-and-checks),
+you can also build the current development version:
 
 ```sh
 cargo install --git https://github.com/gustavommcv/mangapress --locked mangapress-cli
@@ -55,9 +76,11 @@ For a Git-based Cargo installation, add `--force` to rebuild the current version
 
 ### Uninstall
 
-On macOS/Linux, delete `~/.local/bin/mangapress`, or the executable in your custom install folder.
+On macOS/Linux, delete `~/.local/bin/mangapress` and `~/.local/bin/mangapress-licenses`,
+or those same entries in your custom install folder. Do not delete a shared `bin` folder.
 On Windows, delete `%LOCALAPPDATA%\Programs\mangapress` and optionally remove that folder from
-your user `Path` in Environment Variables. For a Cargo installation, run
+your user `Path` in Environment Variables. For a shared custom folder, remove only the executable
+and included notices, not the folder itself. For a Cargo installation, run
 `cargo uninstall mangapress-cli`.
 
 ## Usage
@@ -68,12 +91,20 @@ Convert a volume for the Kindle 11 screen:
 mangapress "Volume 1.cbz" --profile K11 --format epub --output "Books/Volume 1.epub"
 ```
 
-Create the `Books` folder first when specifying a file inside it. Input can be a CBZ, a folder
-of images, or a folder containing chapter subfolders. CBR, CB7, EPUB, and PDF input are not
-supported.
+Missing output folders are created automatically. Input can be a CBZ, a folder
+of images, or a folder containing chapter subfolders. Pages can be JPEG (`.jpg` or `.jpeg`),
+PNG, GIF, BMP, or WebP. Other image formats are not decoded, even if renamed to a supported
+extension. CBR, CB7, EPUB, and PDF input are not supported.
+
+Inside folder input, symbolic links are followed only to regular files within that folder.
+External, broken, and directory links are skipped with a warning, including on `--dry-run`.
+If you intentionally use external links, copy their files into the input instead.
 
 Use `--output` for a file or directory. Without it, output is written beside the input; a Kobo
 profile's EPUB uses the `.kepub.epub` extension. Add `--nokepub` for a plain `.epub`.
+Derived filenames follow the source, not the book title; folders keep dots in their names.
+Existing files are never replaced, even with an explicit output file: a suffix such as
+` (mangapress)` is added instead, and the command reports the path used.
 Choose a format supported by your reading app: a Kindle profile sets screen dimensions but
 does not create MOBI or AZW3 files for the Kindle's native reader.
 
@@ -84,8 +115,20 @@ mangapress --list-profiles
 mangapress "Volume 1.cbz" --profile K11 --format epub --dry-run
 ```
 
-`--dry-run` inspects the book without processing pages or writing output. Run
+`--dry-run` inspects the book and checks the destination without creating anything. It cannot
+guarantee future write permissions or free space. A real run checks write access before page
+processing, then stages and synchronizes the completed book before publishing it. Run
 `mangapress --help` for the full list of options and defaults.
+
+The Kindle DX/DXG profile keeps its built-in 824 × 1000 size in `--list-profiles`. For CBZ
+output (including `auto`), it targets 824 × 1200, as KCC 12.0.0 does. Setting either custom
+dimension disables that special case; EPUB and PDF retain the built-in size.
+Unmodified Scribe profiles cap the EPUB target width at 1920, also following KCC;
+CBZ/PDF and custom dimensions retain their full resolution.
+
+One input file or uncompressed CBZ entry is limited to 256 MiB; this is not a limit on the
+whole book. Oversized images are checked before pixel decoding. See
+[input limits](docs/adr/0015-bounded-input-reads.md) for the KCC thresholds and memory limitations.
 
 ### Common options
 
@@ -163,6 +206,28 @@ The [protocol reference](docs/machine-protocol-v1.md) defines the events and com
 Use the handshake's `protocol_version` to check compatibility. A successful stream ends with a
 `result` event; page progress alone does not mean the book has been saved.
 
+## Terminal output and exit codes
+
+Routine progress, warnings, and errors go to stderr. Help, version information, profile lists,
+and dry-run summaries go to stdout; conversion writes the book to disk, not to stdout.
+`--quiet` suppresses routine progress, but keeps warnings and errors visible.
+With `--json-events`, stdout contains only JSON Lines and ordinary progress is suppressed;
+stderr may still carry diagnostics when a command fails. Help and version requests remain
+human-readable even if `--json-events` is also passed.
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Success, including help, version, profile listings, and dry-run plans. |
+| `1` | Runtime failure: configuration, input, conversion, output, or the JSON event stream. |
+| `2` | Invalid command-line arguments. |
+
+Human profile lists and dry-run summaries stop quietly if the reader of a pipe closes early.
+Other output errors remain failures. A closed JSON stream also fails: consumers must not
+assume success without receiving the final `result` event.
+
+A failed page reports its chapter, one-based position, and original image filename when
+available. Pages generated from several images may not have a single original filename.
+
 ## Contributing and credits
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development, tests, and reporting bugs.
@@ -178,3 +243,5 @@ implementation and licensing boundary.
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) contains credits and license notices for KCC
 and Pillow.
+Release packaging also generates `DEPENDENCY-LICENSES.txt` with the compiled dependencies'
+source license texts and credits; see [notice generation](tools/licenses/README.md).

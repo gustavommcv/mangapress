@@ -104,8 +104,10 @@ impl Profile {
             .map(|(candidate, _)| candidate)
     }
 
-    /// Resolution to actually target, after applying KCC's `--customwidth`/
-    /// `--customheight` overrides (`comic2ebook.py`'s `checkOptions()`):
+    /// Built-in resolution after applying `--customwidth`/`--customheight`.
+    /// Format-specific targets are resolved by
+    /// [`crate::pipeline::OutputFormat::target_resolution`]. As in KCC's
+    /// `comic2ebook.py` `checkOptions()`,
     /// each dimension is independently replaceable, so `OTHER` + one
     /// override + the other left at `0` is a real (if probably unintended)
     /// combination the caller should validate, not something this function

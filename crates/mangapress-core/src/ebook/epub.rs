@@ -60,8 +60,8 @@ pub struct EpubOptions {
     /// carries upstream's hidden first block, and spine items are tagged
     /// `page-spread-*` the Kindle way rather than `rendition:page-spread-*`.
     pub kindle: bool,
-    /// The device resolution, for a Kindle profile used at its own
-    /// resolution — writes upstream's Kindle fixed-layout `<meta>` block,
+    /// The effective EPUB target for an unmodified Kindle profile,
+    /// including Scribe's width cap — writes the Kindle fixed-layout `<meta>` block,
     /// whose `original-resolution` this is. `None` for any other profile, and
     /// for a Kindle profile overridden by `--customwidth`/`--customheight`
     /// (upstream's "Custom" profile, which gets no such block).

@@ -125,8 +125,8 @@ fn locate(chapters: &[Chapter], mut position: usize) -> (usize, usize) {
 
 /// The two pages side by side as one lossless image.
 fn join(first: &[u8], second: &[u8], right_to_left: bool) -> Result<Vec<u8>> {
-    let first = image::load_from_memory(first)?.to_rgb8();
-    let second = image::load_from_memory(second)?.to_rgb8();
+    let first = crate::input::decode_image(first)?.to_rgb8();
+    let second = crate::input::decode_image(second)?.to_rgb8();
     let (left, right) = if right_to_left {
         (second, first)
     } else {
@@ -150,6 +150,18 @@ fn join(first: &[u8], second: &[u8], right_to_left: bool) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn either_half_of_a_spread_is_checked_before_joining() {
+        let oversized = crate::test_support::oversized_bmp();
+        let ordinary = page((3, 7), 128);
+        for (first, second) in [(&oversized, &ordinary.bytes), (&ordinary.bytes, &oversized)] {
+            assert!(matches!(
+                join(first, second, false),
+                Err(crate::Error::ImageTooLarge { .. })
+            ));
+        }
+    }
 
     /// A page of one flat color, as PNG.
     fn page(size: (u32, u32), level: u8) -> Page {
@@ -201,6 +213,9 @@ mod tests {
     #[test]
     fn a_right_to_left_pair_has_the_first_read_page_on_the_right() {
         let mut chapters = book(&[4]);
+        for (index, page) in chapters[0].pages.iter_mut().enumerate() {
+            page.source_path = Some(PathBuf::from(format!("page-{index}.png")));
+        }
         let outcome = join_labelled_spreads(&mut chapters, &[1], true).unwrap();
         assert_eq!(outcome.joined, [1]);
         assert_eq!(chapters[0].pages.len(), 3);
@@ -210,6 +225,18 @@ mod tests {
         // The pages around it are untouched and in order.
         assert_eq!(sides(&chapters[0].pages[0]), (0, 0));
         assert_eq!(sides(&chapters[0].pages[2]), (30, 30));
+        assert!(
+            chapters[0].pages[1].source_path.is_none(),
+            "a joined spread has two source images"
+        );
+        assert_eq!(
+            chapters[0].pages[0].source_path,
+            Some(PathBuf::from("page-0.png"))
+        );
+        assert_eq!(
+            chapters[0].pages[2].source_path,
+            Some(PathBuf::from("page-3.png"))
+        );
     }
 
     #[test]

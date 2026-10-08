@@ -16,6 +16,15 @@ pub enum Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("input file '{path}' exceeds the {limit}-byte limit for one file")]
+    InputTooLarge {
+        path: std::path::PathBuf,
+        limit: u64,
+    },
+
+    #[error("image {width}x{height} exceeds the {limit}-pixel limit for one image")]
+    ImageTooLarge { width: u32, height: u32, limit: u64 },
+
     #[error("unknown device profile code: {0}")]
     UnknownProfile(String),
 

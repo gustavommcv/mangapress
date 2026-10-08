@@ -6,14 +6,17 @@ synthetic input or a description of the page layout is preferable to uploading m
 
 ## Setup and checks
 
-Use a stable Rust toolchain with rustfmt and Clippy, as in [CI](.github/workflows/ci.yml).
+Use Rust 1.98.1 with rustfmt and Clippy, as selected by
+[rust-toolchain.toml](rust-toolchain.toml) and used in [CI](.github/workflows/ci.yml).
+With rustup installed, run `rustup toolchain install --no-self-update` from the checkout.
+This is also the declared minimum; compatibility with older compilers has not been tested.
 From the repository root:
 
 ```sh
 cargo build --workspace --locked
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 ```
 
 Use `cargo fmt --all` to apply formatting. To run the CLI from the checkout:
@@ -24,6 +27,11 @@ cargo run -p mangapress-cli -- --help
 
 CI checks formatting, linting, and tests on Windows, macOS, and Linux. Release targets and
 packaging are defined in [the release workflow](.github/workflows/release.yml).
+Dependency changes also require the four target-specific
+[license-notice checks](tools/licenses/README.md). CI and release packaging use the same
+generator; review its reports rather than accepting missing notices or generic fallback text.
+Installer changes also require the [offline installer checks](tools/installers/README.md),
+which run the actual scripts with native hashing and extraction on their supported platforms.
 
 ## Where to make a change
 
@@ -41,8 +49,10 @@ synthetic; see [tests/fixtures/README.md](tests/fixtures/README.md). Real pages 
 a problem belong in the ignored `tests/fixtures/real/` folder and must not be committed.
 
 For changes that affect processed pixels, also run the [KCC comparison](tools/parity/README.md).
-It requires Python with Pillow and NumPy and a separate KCC checkout. It supplements Rust tests
-and covers only its listed scenarios and profiles.
+Install its small Python dependency set and provide a separate KCC checkout, as described there.
+It supplements Rust tests and covers only its listed scenarios and profiles. The comparison
+workflow runs the full Kindle 11 matrix and representative device checks for relevant PRs;
+verify that run for the exact commit as well as the three-platform Rust CI.
 
 KCC 12.0.0 is the current reference. Preserve the implementation and licensing boundary in
 [ADR 0007](docs/adr/0007-gplv3-boundary-kcc-image-rs.md), and follow
@@ -58,6 +68,11 @@ Keep each PR focused and explain the change and its verification. Write code com
 documentation, commit messages, and PR descriptions in English. Check instructions against the
 current CLI and workflows. Preserve accepted ADRs and audit evidence; record a changed decision
 in a new ADR when it needs one.
+
+CI also runs pinned cargo-audit and actionlint tools. Security advisories are fetched on each
+run, not frozen with the compiler. Review findings rather than adding blanket ignores.
+For workflow changes, check the [release gates](docs/releases.md) too. Update action SHAs
+only after reviewing the upstream release and verifying all affected remote workflows.
 
 Before merging, verify the remote checks for the exact PR commit and wait for the maintainer's
 approval. Passing local checks does not replace a successful remote run. If the run cannot be

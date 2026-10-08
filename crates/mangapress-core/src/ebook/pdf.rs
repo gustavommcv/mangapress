@@ -49,7 +49,7 @@ pub fn build_pdf(chapters: &[Chapter], options: &PdfOptions) -> Result<Vec<u8>> 
 
     for chapter in chapters {
         for page in &chapter.pages {
-            let decoded = image::load_from_memory(&page.bytes)?;
+            let decoded = crate::input::decode_image(&page.bytes)?;
             let (width_px, height_px) = (decoded.width(), decoded.height());
             // Grayscale pages as single-channel images; a color page (only
             // there with `--forcecolor`) stays RGB.
@@ -134,6 +134,16 @@ mod tests {
         assert!(matches!(
             build_pdf(&[], &default_options()),
             Err(Error::EmptyBook)
+        ));
+    }
+
+    #[test]
+    fn a_library_supplied_oversized_page_is_not_decoded_by_the_pdf_builder() {
+        let mut chapter = chapter_with_pages(&[(3, 7)]);
+        chapter.pages[0].bytes = crate::test_support::oversized_bmp();
+        assert!(matches!(
+            build_pdf(&[chapter], &default_options()),
+            Err(Error::ImageTooLarge { .. })
         ));
     }
 

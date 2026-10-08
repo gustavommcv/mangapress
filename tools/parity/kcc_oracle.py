@@ -25,7 +25,8 @@ from argparse import Namespace
 def load_kcc(checkout):
     # KCC imports these at module level for features this driver never
     # reaches (file sorting, PDF input, MozJPEG). Stand-ins keep the import
-    # working on a machine that only has Pillow and NumPy.
+    # working without the full KCC dependency set. The comparison's small
+    # dependency set is recorded in requirements.txt next to this file.
     for name, attributes in {
         "natsort": {"os_sort_keygen": lambda: (lambda value: value), "os_sorted": sorted},
         "slugify": {"slugify": lambda *args, **kwargs: args[0]},
@@ -54,7 +55,8 @@ def run_pages(checkout, out_dir, list_file, arguments):
     crops_first = "is_first_page" in inspect.signature(image.ComicPageParser.__init__).parameters
 
     pages = []
-    paths = [line.strip() for line in open(list_file) if line.strip()]
+    with open(list_file, encoding="utf-8") as handle:
+        paths = [line.strip() for line in handle if line.strip()]
     for number, path in enumerate(paths):
         source = (os.path.dirname(path), os.path.basename(path))
         parser = image.ComicPageParser(source, number == 0, options) if crops_first else image.ComicPageParser(source, options)

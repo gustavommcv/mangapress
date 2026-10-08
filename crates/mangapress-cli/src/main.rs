@@ -1,10 +1,11 @@
 mod args;
+mod output;
 mod protocol;
 
 use anyhow::{bail, Context};
 use args::{Cli, Cropping, Format, InterPanelCrop, MetadataTitle, Splitter};
 use clap::{error::ErrorKind, Parser};
-use mangapress_core::archive::{cbz::extract_cbz, folder::read_folder, SourceEntry};
+use mangapress_core::archive::read_book;
 use mangapress_core::ebook::{
     cbz_out, cover, epub, group_into_chapters, pdf, spreads, Chapter, Page,
 };
@@ -22,91 +23,6 @@ use std::ffi::OsString;
 use std::io::{IsTerminal, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-
-/// A resolved book title (from `--title`, `ComicInfo.xml`'s `Series`/`Title`,
-/// or the input filename) can contain characters that are illegal in a
-/// filename on Windows, or that `/`/`\` would misread as path separators on
-/// any platform (e.g. `--metadatatitle combine` appends `": Title"`) —
-/// replace the reserved set with `-` before using the title as an output
-/// filename.
-fn sanitize_filename(name: &str) -> String {
-    name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "-")
-}
-
-/// Best-effort "do these two paths refer to the same file" check. `input`
-/// always exists by this point; `candidate_output` usually doesn't yet, so
-/// this can't just canonicalize both and compare -- it canonicalizes
-/// `candidate_output`'s parent instead and rejoins the file name. Good
-/// enough to catch the case this exists for (an unset `--output`, or an
-/// explicit one, that resolves to the same file being read) without a new
-/// dependency; it isn't a substitute for a real same-file check across
-/// hardlinks etc.
-fn same_file(input: &Path, candidate_output: &Path) -> bool {
-    fn resolve(path: &Path) -> Option<PathBuf> {
-        if path.exists() {
-            return std::fs::canonicalize(path).ok();
-        }
-        let parent = path.parent().filter(|p| !p.as_os_str().is_empty())?;
-        let file_name = path.file_name()?;
-        Some(std::fs::canonicalize(parent).ok()?.join(file_name))
-    }
-
-    match (resolve(input), resolve(candidate_output)) {
-        (Some(a), Some(b)) => a == b,
-        _ => input == candidate_output,
-    }
-}
-
-/// Does `path` already look like a path to one of the ebook formats this
-/// tool writes? Used to decide, for an `--output` path that doesn't exist
-/// yet, whether it names an output *file* to create (so it's a literal
-/// path) or an output *directory* to create (so a filename still needs to
-/// be derived from the title) -- an `--output` naming a not-yet-created
-/// directory would otherwise silently produce an extension-less file
-/// literally named after that directory.
-fn has_known_output_extension(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|e| e.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("epub") | Some("cbz") | Some("pdf")
-    )
-}
-
-/// A sibling path that doesn't collide with `path`, for when `path` would
-/// otherwise overwrite the very input it was derived from. Mirrors KCC's
-/// own `getOutputFilename()`, which appends a `_kccN` suffix for the same
-/// reason: converting a `.cbz` back to `.cbz` with no explicit `--output`
-/// would otherwise destroy the source file being read.
-fn disambiguate_output_path(path: &Path) -> PathBuf {
-    let stem = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let extension = path.extension().map(|e| e.to_string_lossy().into_owned());
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
-
-    for n in 1.. {
-        let name = if n == 1 {
-            format!("{stem} (mangapress)")
-        } else {
-            format!("{stem} (mangapress {n})")
-        };
-        let candidate_name = match &extension {
-            Some(ext) => format!("{name}.{ext}"),
-            None => name,
-        };
-        let candidate = match parent {
-            Some(dir) => dir.join(candidate_name),
-            None => PathBuf::from(candidate_name),
-        };
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    unreachable!()
-}
 
 fn absolute_display(path: &Path) -> String {
     if path.is_absolute() {
@@ -169,7 +85,8 @@ fn spread_labels_beside(input: &Path) -> Option<PathBuf> {
 
 /// The positions in a spread-label file: `{"spreads": [12, 40]}`.
 fn read_spread_labels(path: &Path) -> Result<Vec<usize>, String> {
-    let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let bytes = mangapress_core::input::read_file(path).map_err(|error| error.to_string())?;
+    let text = String::from_utf8(bytes).map_err(|error| error.to_string())?;
     let value: serde_json::Value =
         serde_json::from_str(&text).map_err(|error| error.to_string())?;
     let positions = value
@@ -320,30 +237,32 @@ fn automatic_format(profile: &Profile) -> Format {
     }
 }
 
-/// Upstream's file name for a Kobo EPUB derived from an input *file*: every
-/// run of characters that aren't letters, digits or underscores becomes one
-/// underscore.
-fn kobo_safe_stem(stem: &str) -> String {
-    let mut out = String::with_capacity(stem.len());
-    let mut in_run = false;
-    for c in stem.chars() {
-        if c.is_alphanumeric() || c == '_' {
-            out.push(c);
-            in_run = false;
-        } else if !in_run {
-            out.push('_');
-            in_run = true;
-        }
-    }
-    out
-}
-
 fn format_name(format: Format) -> &'static str {
     match format {
         Format::Auto => unreachable!("--format auto is resolved before any format is named"),
         Format::Epub => "epub",
         Format::Cbz => "cbz",
         Format::Pdf => "pdf",
+    }
+}
+
+fn pipeline_format(format: Format) -> OutputFormat {
+    match format {
+        Format::Auto => unreachable!("--format auto is resolved before processing configuration"),
+        Format::Epub => OutputFormat::Epub,
+        Format::Cbz => OutputFormat::Cbz,
+        Format::Pdf => OutputFormat::Pdf,
+    }
+}
+
+/// A human report may stop when its reader closes the pipe; other I/O failures remain errors.
+fn write_human_report<W: std::io::Write>(
+    writer: &mut W,
+    report: impl FnOnce(&mut W) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    match report(writer).and_then(|()| writer.flush()) {
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        result => result,
     }
 }
 
@@ -381,7 +300,10 @@ fn process_chapter_pages(
                 process_page(&source_page.bytes, options, is_first_page).map_err(|error| {
                     PageProcessingFailure {
                         page: page_number,
-                        diagnostic: error.to_string(),
+                        diagnostic: match &source_page.source_path {
+                            Some(path) => format!("image {path:?}: {error}"),
+                            None => error.to_string(),
+                        },
                     }
                 })?;
             let mut progress = progress.lock().map_err(|_| PageProcessingFailure {
@@ -402,9 +324,10 @@ fn process_chapter_pages(
         .collect::<Result<Vec<_>, PageProcessingFailure>>()?;
 
     let mut flattened = Vec::with_capacity(pages.len());
-    for page_outputs in outputs {
+    for (source, page_outputs) in pages.iter().zip(outputs) {
         for (piece, page) in page_outputs.into_iter().enumerate() {
             flattened.push(Page {
+                source_path: source.source_path.clone(),
                 extension: page.extension,
                 bytes: page.bytes,
                 black_background: page.black_background,
@@ -484,11 +407,6 @@ fn run<W: std::io::Write + Send>(
     failure: &mut RunFailure,
 ) -> anyhow::Result<()> {
     if cli.list_profiles {
-        // `writeln!` + break-on-error, not `println!`, because `println!`
-        // panics on a write failure -- including the very ordinary
-        // `mangapress --list-profiles | head` closing its end of the pipe
-        // early. Piping a listing into `head`/`grep`/`less` should just
-        // stop quietly, like it does for any real Unix tool.
         if events.enabled() {
             for profile in mangapress_core::profile::PROFILES {
                 events
@@ -516,18 +434,17 @@ fn run<W: std::io::Write + Send>(
                 )
                 .map_err(event_write_failure)?;
         } else {
-            let mut stdout = std::io::stdout().lock();
-            for p in mangapress_core::profile::PROFILES {
-                if writeln!(
-                    stdout,
-                    "{:<10} {:<40} {}x{}",
-                    p.code, p.display_name, p.width, p.height
-                )
-                .is_err()
-                {
-                    break;
+            write_human_report(&mut std::io::stdout().lock(), |stdout| {
+                for p in mangapress_core::profile::PROFILES {
+                    writeln!(
+                        stdout,
+                        "{:<10} {:<40} {}x{}",
+                        p.code, p.display_name, p.width, p.height
+                    )?;
                 }
-            }
+                Ok(())
+            })
+            .context("writing the profile list")?;
         }
         return Ok(());
     }
@@ -570,7 +487,14 @@ fn run<W: std::io::Write + Send>(
         bail!("input path does not exist: {}", input.display());
     }
 
-    let (width, height) = profile.effective_resolution(cli.customwidth, cli.customheight);
+    let mut cli = cli;
+    if cli.format == Format::Auto {
+        cli.format = automatic_format(profile);
+    }
+    let cli = cli;
+    let output_format = pipeline_format(cli.format);
+    let (width, height) =
+        output_format.target_resolution(profile, cli.customwidth, cli.customheight);
     if width == 0 || height == 0 {
         *failure = RunFailure::new(
             "invalid_resolution",
@@ -588,12 +512,6 @@ fn run<W: std::io::Write + Send>(
             cli.profile
         );
     }
-
-    let mut cli = cli;
-    if cli.format == Format::Auto {
-        cli.format = automatic_format(profile);
-    }
-    let cli = cli;
 
     if cli.nested_toc && cli.format != Format::Epub {
         *failure = RunFailure::new(
@@ -648,14 +566,35 @@ fn run<W: std::io::Write + Send>(
         format!("reading input from {}", input.display()),
     )
     .with_path(input_path.clone());
-    let mut source_entries: Vec<SourceEntry> = if input.is_dir() {
-        read_folder(&input)
-    } else {
-        extract_cbz(&input)
+    let book_input =
+        read_book(&input).with_context(|| format!("reading input from {}", input.display()))?;
+    for link in &book_input.skipped_links {
+        let path = absolute_display(&input.join(&link.relative_path));
+        let message = format!("Skipped a symbolic link because {}.", link.reason);
+        if events.enabled() {
+            events
+                .emit(
+                    "warning",
+                    json!({
+                        "severity": "warning",
+                        "code": "link_skipped",
+                        "stage": "inspect",
+                        "path": path,
+                        "recoverable": true,
+                        "message": message,
+                    }),
+                )
+                .map_err(event_write_failure)?;
+        } else {
+            eprintln!("warning: {message} Link: {path:?}");
+        }
     }
-    .with_context(|| format!("reading input from {}", input.display()))?;
+    let mut source_entries = book_input.entries;
 
-    if source_entries.is_empty() {
+    if source_entries.is_empty()
+        && book_input.skipped_non_images == 0
+        && book_input.skipped_links.is_empty()
+    {
         *failure = RunFailure::new(
             "input_empty",
             "inspect",
@@ -725,6 +664,7 @@ fn run<W: std::io::Write + Send>(
 
     let (source_entries, skipped_non_images) =
         mangapress_core::archive::filter_image_entries(source_entries);
+    let skipped_non_images = skipped_non_images + book_input.skipped_non_images;
     if skipped_non_images > 0 {
         let message = format!(
             "Skipped {skipped_non_images} non-image file(s) because their extensions aren't recognized."
@@ -764,7 +704,7 @@ fn run<W: std::io::Write + Send>(
     }
 
     // Upstream's two warnings about what it was given. Neither stops the run.
-    let device = profile.effective_resolution(cli.customwidth, cli.customheight);
+    let device = (width, height);
     let (smaller, measured) =
         mangapress_core::archive::smaller_than_device(&source_entries, device);
     let mut input_warnings: Vec<(&str, String)> = Vec::new();
@@ -821,7 +761,7 @@ fn run<W: std::io::Write + Send>(
         Some(found)
     });
     let custom_cover: Option<Vec<u8>> = match &cover_path {
-        Some(path) => match std::fs::read(path) {
+        Some(path) => match mangapress_core::input::read_file(path) {
             Ok(bytes) => Some(bytes),
             Err(error) => {
                 *failure = RunFailure::new(
@@ -981,71 +921,73 @@ fn run<W: std::io::Write + Send>(
     // format ("kepub.epub") is not a value the protocol has.
     let format = format_name(cli.format);
     let extension = if kepub { "kepub.epub" } else { format };
-    let output_path = match &cli.output {
-        Some(path) if path.is_dir() => {
-            path.join(format!("{}.{extension}", sanitize_filename(&title)))
-        }
-        Some(path) if !path.exists() && !has_known_output_extension(path) => {
-            // `--dry-run` promises nothing gets written -- creating the
-            // directory here would itself be a side effect, so only the
-            // hypothetical path is computed; the real create happens below,
-            // once dry-run has already returned.
-            if !cli.dry_run {
-                *failure = RunFailure::new(
-                    "output_directory_create_failed",
-                    "write",
-                    true,
-                    "Couldn't create the selected output folder.",
-                    format!("creating output directory {}", path.display()),
-                )
-                .with_manga(title.clone())
-                .with_path(absolute_display(path));
-                std::fs::create_dir_all(path)
-                    .with_context(|| format!("creating output directory {}", path.display()))?;
-            }
-            path.join(format!("{}.{extension}", sanitize_filename(&title)))
-        }
-        Some(path) => path.clone(),
-        None if kepub && input.is_file() => {
-            let stem = input
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            input.with_file_name(format!("{}.{extension}", kobo_safe_stem(&stem)))
-        }
-        None => input.with_extension(extension),
-    };
-    // With no --output (or an explicit one matching the input), converting
-    // a `.cbz` back to `.cbz` would otherwise silently overwrite the very
-    // source file being read.
-    let output_path = if same_file(&input, &output_path) {
-        let disambiguated = disambiguate_output_path(&output_path);
+    *failure = RunFailure::new(
+        "output_plan_failed",
+        "plan",
+        true,
+        "Couldn't prepare the output destination. Check its path and permissions.",
+        "planning the output destination",
+    )
+    .with_manga(title.clone())
+    .with_path(absolute_display(cli.output.as_deref().unwrap_or(&input)));
+    let output_plan = output::plan(&input, cli.output.as_deref(), extension, kepub)
+        .context("planning the output destination")?;
+    let output_path = output_plan.path;
+    if output_plan.collision {
+        let (code, message) = if output_plan.input_collision {
+            ("output_collision", "The requested output would overwrite the input, so a safe alternate filename will be used.")
+        } else {
+            (
+                "output_exists",
+                "The requested output already exists, so a safe alternate filename will be used.",
+            )
+        };
         if events.enabled() {
             events
                 .emit(
                     "warning",
                     json!({
                         "severity": "warning",
-                        "code": "output_collision",
+                        "code": code,
                         "stage": "plan",
                         "manga": title.clone(),
-                        "path": absolute_display(&disambiguated),
+                        "path": absolute_display(&output_path),
                         "recoverable": true,
-                        "message": "The requested output would overwrite the input, so a safe alternate filename will be used.",
+                        "message": message,
                     }),
                 )
                 .map_err(event_write_failure)?;
         } else {
-            eprintln!(
-                "warning: output would overwrite the input file; writing to {} instead",
-                disambiguated.display()
-            );
+            eprintln!("warning: {message} Writing to {}", output_path.display());
         }
-        disambiguated
-    } else {
-        output_path
-    };
+    }
     let output_path_absolute = absolute_display(&output_path);
+    let staged_output = if cli.dry_run {
+        None
+    } else {
+        let directory = output::parent(&output_path)?;
+        *failure = RunFailure::new(
+            "output_directory_create_failed",
+            "write",
+            true,
+            "Couldn't create the selected output folder.",
+            format!("creating output directory {}", directory.display()),
+        )
+        .with_manga(title.clone())
+        .with_path(absolute_display(directory));
+        std::fs::create_dir_all(directory)
+            .with_context(|| format!("creating output directory {}", directory.display()))?;
+        *failure = RunFailure::new(
+            "output_plan_failed",
+            "plan",
+            true,
+            "Couldn't prepare the output destination. Check its path and permissions.",
+            format!("staging output beside {}", output_path.display()),
+        )
+        .with_manga(title.clone())
+        .with_path(output_path_absolute.clone());
+        Some(output::StagedOutput::new(&output_path).context("staging the output file")?)
+    };
     events
         .emit(
             "stage",
@@ -1089,13 +1031,23 @@ fn run<W: std::io::Write + Send>(
                 )
                 .map_err(event_write_failure)?;
         } else {
-            println!("dry run -- no pages will be processed, nothing will be written");
-            println!("title: {title}");
-            println!("author: {author}");
-            println!("format: {:?}", cli.format);
-            println!("device: {} ({width}x{height})", profile.display_name);
-            println!("chapters: {total_chapters}, pages: {total_pages}");
-            println!("would write: {}", output_path.display());
+            write_human_report(&mut std::io::stdout().lock(), |stdout| {
+                writeln!(
+                    stdout,
+                    "dry run -- no pages will be processed, nothing will be written"
+                )?;
+                writeln!(stdout, "title: {title}")?;
+                writeln!(stdout, "author: {author}")?;
+                writeln!(stdout, "format: {format}")?;
+                writeln!(
+                    stdout,
+                    "device: {} ({width}x{height})",
+                    profile.display_name
+                )?;
+                writeln!(stdout, "chapters: {total_chapters}, pages: {total_pages}")?;
+                writeln!(stdout, "would write: {}", output_path.display())
+            })
+            .context("writing the dry-run summary")?;
         }
         return Ok(());
     }
@@ -1104,7 +1056,6 @@ fn run<W: std::io::Write + Send>(
     // joined and cut again before anything else happens to them, so the
     // page count from here on is the cut pages'.
     let (source_chapters, total_pages) = if cli.webtoon {
-        let device = profile.effective_resolution(cli.customwidth, cli.customheight);
         let mut chapters = source_chapters;
         for chapter in &mut chapters {
             let sources: Vec<&[u8]> = chapter
@@ -1188,12 +1139,7 @@ fn run<W: std::io::Write + Send>(
         no_processing: cli.noprocessing,
         rotate_right: cli.rotateright,
         force_png: cli.forcepng,
-        output_format: match cli.format {
-            Format::Auto => unreachable!("--format auto was resolved above"),
-            Format::Epub => OutputFormat::Epub,
-            Format::Cbz => OutputFormat::Cbz,
-            Format::Pdf => OutputFormat::Pdf,
-        },
+        output_format,
         gamma: cli.gamma,
         autolevel: cli.autolevel,
         noautocontrast: cli.noautocontrast,
@@ -1289,10 +1235,7 @@ fn run<W: std::io::Write + Send>(
                 .with_chapter(chapter_title.clone())
                 .with_page(error.page)
                 .with_path(input_path.clone());
-                bail!(
-                    "processing a page in chapter '{chapter_title}': {}",
-                    error.diagnostic
-                );
+                bail!("{}", failure.diagnostic);
             }
         };
 
@@ -1419,13 +1362,13 @@ fn run<W: std::io::Write + Send>(
                 nested_toc: cli.nested_toc,
                 kindle: profile.family() == Family::Kindle,
                 // Upstream's Kindle fixed-layout block is for a Kindle
-                // profile at its own resolution; overriding either
+                // profile at its format-specific target; overriding either
                 // dimension makes it upstream's "Custom" profile, which
                 // gets none.
                 kindle_resolution: (profile.family() == Family::Kindle
                     && cli.customwidth.unwrap_or(0) == 0
                     && cli.customheight.unwrap_or(0) == 0)
-                    .then_some((profile.width, profile.height)),
+                    .then_some((width, height)),
                 invert_direction: cli.invertdirection,
                 spread_shift: cli.spreadshift,
                 one_page_landscape: cli.onepagelandscape,
@@ -1501,7 +1444,9 @@ fn run<W: std::io::Write + Send>(
             }),
         )
         .map_err(event_write_failure)?;
-    std::fs::write(&output_path, &output_bytes)
+    staged_output
+        .expect("non-dry-run output was staged before processing")
+        .write(&output_bytes)
         .with_context(|| format!("writing output to {}", output_path.display()))?;
     if !quiet {
         eprintln!(
@@ -1552,6 +1497,53 @@ fn run<W: std::io::Write + Send>(
 mod tests {
     use super::*;
 
+    struct FailingWriter {
+        kind: std::io::ErrorKind,
+        fail_on_flush: bool,
+    }
+
+    impl std::io::Write for FailingWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.fail_on_flush {
+                Ok(bytes.len())
+            } else {
+                Err(self.kind.into())
+            }
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            if self.fail_on_flush {
+                Err(self.kind.into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn human_reports_ignore_only_broken_pipe_including_flush_failures() {
+        for kind in [
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::PermissionDenied,
+        ] {
+            for fail_on_flush in [false, true] {
+                let mut writer = FailingWriter {
+                    kind,
+                    fail_on_flush,
+                };
+                let result = write_human_report(&mut writer, |out| writeln!(out, "report"));
+                if kind == std::io::ErrorKind::BrokenPipe {
+                    assert!(result.is_ok());
+                } else {
+                    assert_eq!(result.unwrap_err().kind(), kind);
+                }
+            }
+        }
+        let mut output = Vec::new();
+        write_human_report(&mut output, |out| writeln!(out, "report")).unwrap();
+        assert_eq!(output, b"report\n");
+    }
+
     #[test]
     fn automatic_format_follows_the_device_family() {
         let format = |code: &str| automatic_format(Profile::by_code(code).unwrap());
@@ -1562,13 +1554,6 @@ mod tests {
         assert_eq!(format("KoC"), Format::Epub);
         assert_eq!(format("Rmk2"), Format::Pdf);
         assert_eq!(format("OTHER"), Format::Epub);
-    }
-
-    #[test]
-    fn kobo_safe_stem_collapses_everything_but_word_characters() {
-        assert_eq!(kobo_safe_stem("My Book (v1)"), "My_Book_v1_");
-        assert_eq!(kobo_safe_stem("already_safe_01"), "already_safe_01");
-        assert_eq!(kobo_safe_stem("君の名は - 1"), "君の名は_1");
     }
 
     #[test]
@@ -1583,22 +1568,6 @@ mod tests {
         assert_eq!(at(1_709_251_200), "2024-03-01T00:00:00Z");
         assert_eq!(at(1_790_998_496), "2026-10-03T03:34:56Z");
         assert_eq!(at(4_102_444_799), "2099-12-31T23:59:59Z");
-    }
-
-    #[test]
-    fn sanitize_filename_replaces_every_reserved_character() {
-        assert_eq!(
-            sanitize_filename(r#"a/b\c:d*e?f"g<h>i|j"#),
-            "a-b-c-d-e-f-g-h-i-j"
-        );
-    }
-
-    #[test]
-    fn sanitize_filename_leaves_ordinary_titles_alone() {
-        assert_eq!(
-            sanitize_filename("Chainsaw Man - Vol.01"),
-            "Chainsaw Man - Vol.01"
-        );
     }
 
     /// A series folder: the named books (a name ending in `/` is a folder)
@@ -1734,68 +1703,6 @@ mod tests {
         assert_eq!(cover_for(&dir, "Vol. 1"), None);
     }
 
-    #[test]
-    fn same_file_recognizes_an_existing_file_under_a_different_spelling() {
-        let dir =
-            std::env::temp_dir().join(format!("mangapress-samefile-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let input = dir.join("book.cbz");
-        std::fs::write(&input, b"x").unwrap();
-
-        // A not-yet-created candidate that resolves to the exact same path.
-        let candidate = dir.join(".").join("book.cbz");
-        assert!(same_file(&input, &candidate));
-
-        let different = dir.join("other.cbz");
-        assert!(!same_file(&input, &different));
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn has_known_output_extension_recognizes_only_the_formats_this_tool_writes() {
-        assert!(has_known_output_extension(Path::new("book.epub")));
-        assert!(has_known_output_extension(Path::new("book.EPUB")));
-        assert!(has_known_output_extension(Path::new("book.cbz")));
-        assert!(has_known_output_extension(Path::new("book.pdf")));
-        assert!(!has_known_output_extension(Path::new("book.zip")));
-        assert!(!has_known_output_extension(Path::new("output-folder")));
-    }
-
-    #[test]
-    fn disambiguate_output_path_appends_a_suffix_and_keeps_the_extension() {
-        let dir = std::env::temp_dir().join(format!(
-            "mangapress-disambiguate-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let colliding = dir.join("book.cbz");
-        std::fs::write(&colliding, b"x").unwrap();
-
-        let result = disambiguate_output_path(&colliding);
-        assert_eq!(result, dir.join("book (mangapress).cbz"));
-        assert!(!result.exists());
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn disambiguate_output_path_counts_up_when_the_first_suffix_also_collides() {
-        let dir = std::env::temp_dir().join(format!(
-            "mangapress-disambiguate-counting-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let colliding = dir.join("book.cbz");
-        std::fs::write(&colliding, b"x").unwrap();
-        std::fs::write(dir.join("book (mangapress).cbz"), b"x").unwrap();
-
-        let result = disambiguate_output_path(&colliding);
-        assert_eq!(result, dir.join("book (mangapress 2).cbz"));
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
     fn solid_gray_png(size: u32, gray: u8) -> Vec<u8> {
         let img = image::GrayImage::from_pixel(size, size, image::Luma([gray]));
         let mut bytes = Vec::new();
@@ -1859,7 +1766,9 @@ mod tests {
         let gray_levels = [10u8, 60, 110, 160, 210];
         let pages: Vec<Page> = gray_levels
             .iter()
-            .map(|&g| Page {
+            .enumerate()
+            .map(|(index, &g)| Page {
+                source_path: Some(PathBuf::from(format!("page-{index}.png"))),
                 extension: "png".to_string(),
                 bytes: solid_gray_png(40, g),
                 ..Default::default()
@@ -1869,6 +1778,9 @@ mod tests {
         let options = minimal_pipeline_options();
         let processed = process_chapter_pages(&pages, &options, false, |_, _| Ok(())).unwrap();
         assert_eq!(processed.len(), gray_levels.len());
+        for (source, result) in pages.iter().zip(&processed) {
+            assert_eq!(result.source_path, source.source_path);
+        }
 
         let output_grays: Vec<u8> = processed
             .iter()

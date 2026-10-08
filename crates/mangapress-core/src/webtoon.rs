@@ -44,6 +44,9 @@ pub fn merge_strip(pages: Vec<RgbImage>) -> Result<RgbImage> {
             "strip too tall at {total_height} pixels ({strip_width} wide); try separate chapter folders"
         )));
     }
+    // KCC's next stage rejects strips above its one-billion-pixel warning
+    // threshold. Check before building the canvas, rather than after saving it.
+    crate::input::check_webtoon_dimensions(strip_width, total_height as u32)?;
 
     // The canvas is sized from the images' *original* heights, as upstream
     // sizes it, even though a resized image may come out shorter or taller:
@@ -73,7 +76,7 @@ pub fn pages_from_chapter(sources: &[&[u8]], device: (u32, u32)) -> Result<Vec<V
 
     let mut decoded = Vec::with_capacity(sources.len());
     for source in sources {
-        decoded.push(image::load_from_memory(source)?.to_rgb8());
+        decoded.push(crate::input::decode_image(source)?.to_rgb8());
     }
     let strip = merge_strip(decoded)?;
 
@@ -359,6 +362,15 @@ mod tests {
     use image::Rgb;
 
     const DEVICE: (u32, u32) = (1072, 1448);
+
+    #[test]
+    fn source_headers_are_checked_before_merging_a_webtoon() {
+        let source = crate::test_support::oversized_bmp();
+        assert!(matches!(
+            pages_from_chapter(&[&source], DEVICE),
+            Err(Error::ImageTooLarge { .. })
+        ));
+    }
 
     /// A white strip `width` wide with a textured block for each
     /// `(top, height)` in `panels`.

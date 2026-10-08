@@ -6,8 +6,15 @@ endorsed by, KCC, Pillow, or their authors.
 
 Its code is its own, written in Rust for this project. But it sets out to produce the same pages
 as another program, and two projects' work shows in it closely enough that their notices belong
-here. (The Rust crates it is compiled with are a separate matter: they are listed in `Cargo.lock`,
-each under its own license.)
+here.
+
+## Compiled dependencies
+
+Release archives also include `DEPENDENCY-LICENSES.txt`: original license texts and copyright
+notices for the locked Rust dependency graph, including bundled native-library notices gathered
+from those packages. It is generated separately for each release target. Build dependencies are
+included as a conservative superset; development-only dependencies are excluded. See
+[notice generation](tools/licenses/README.md) for the tooling and source-file clarifications.
 
 ## KCC (Kindle Comic Converter)
 

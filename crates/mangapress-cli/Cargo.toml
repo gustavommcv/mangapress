@@ -2,6 +2,7 @@
 name = "mangapress-cli"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "CLI entry point for mangapress."
@@ -17,9 +18,9 @@ clap = { workspace = true }
 anyhow = { workspace = true }
 rayon = { workspace = true }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 
 [dev-dependencies]
 image = { workspace = true }
-tempfile = { workspace = true }
 zip = { workspace = true }
 roxmltree = { workspace = true }

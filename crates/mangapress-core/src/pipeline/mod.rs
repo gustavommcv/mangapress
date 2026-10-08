@@ -116,11 +116,13 @@ pub fn default_jpeg_quality(profile: &crate::profile::Profile) -> u8 {
 }
 
 impl PipelineOptions {
-    /// The resolution pages are actually resized to, after applying any
-    /// `--customwidth`/`--customheight` override on top of `profile`.
+    /// The format-specific target, or the custom resolution when supplied.
     pub fn target_resolution(&self) -> (u32, u32) {
-        self.profile
-            .effective_resolution(self.width_override, self.height_override)
+        self.output_format.target_resolution(
+            self.profile,
+            self.width_override,
+            self.height_override,
+        )
     }
 }
 
@@ -147,6 +149,30 @@ pub enum OutputFormat {
     Epub,
     Cbz,
     Pdf,
+}
+
+impl OutputFormat {
+    /// Resolve the processing target without changing the device table.
+    /// KCC 12.0.0's `checkOptions()` uses a 1200-pixel CBZ height for Kindle
+    /// DX and caps Scribe EPUB width at 1920. Either custom dimension
+    /// disables those adjustments, even a value equal to the built-in one.
+    pub fn target_resolution(
+        self,
+        profile: &crate::profile::Profile,
+        width_override: Option<u32>,
+        height_override: Option<u32>,
+    ) -> (u32, u32) {
+        if width_override.is_some() || height_override.is_some() {
+            return profile.effective_resolution(width_override, height_override);
+        }
+        match self {
+            Self::Cbz if profile.code == "KDX" => (profile.width, 1200),
+            Self::Epub if profile.code.starts_with("KS") => {
+                (profile.width.min(1920), profile.height)
+            }
+            _ => (profile.width, profile.height),
+        }
+    }
 }
 
 /// One page this pipeline produced, encoded and ready for an ebook builder,
@@ -200,6 +226,7 @@ pub fn process_page(
     is_first_page: bool,
 ) -> Result<Vec<ProcessedPage>> {
     if options.no_processing {
+        crate::input::image_dimensions(source_bytes)?;
         let extension = match image::guess_format(source_bytes) {
             Ok(ImageFormat::Png) => "png",
             Ok(ImageFormat::Gif) => "gif",
@@ -214,7 +241,7 @@ pub fn process_page(
         }]);
     }
 
-    let decoded = image::load_from_memory(source_bytes)?;
+    let decoded = crate::input::decode_image(source_bytes)?;
     // Upstream answers "not color" for a single-channel source without
     // measuring it.
     let single_channel = !decoded.color().has_color();
@@ -475,7 +502,10 @@ fn resize_for_device<P: image::Pixel<Subpixel = u8> + 'static>(
             upscale: options.upscale,
             stretch: options.stretch,
             wallpaper: options.wallpaper,
-            is_kdx_profile: options.profile.code == "KDX",
+            // A custom resolution is KCC's Custom profile, not KDX.
+            is_kdx_profile: options.profile.code == "KDX"
+                && options.width_override.is_none()
+                && options.height_override.is_none(),
             pads_for_cbz_or_pdf: matches!(
                 options.output_format,
                 OutputFormat::Cbz | OutputFormat::Pdf
@@ -645,6 +675,78 @@ mod tests {
             noautocontrast: false,
             erase_rainbow: false,
             jpeg_quality: Some(100),
+        }
+    }
+
+    #[test]
+    fn kindle_dx_cbz_target_does_not_change_the_device_table_or_other_formats() {
+        let mut options = options();
+        options.profile = crate::profile::Profile::by_code("KDX").unwrap();
+        assert_eq!(
+            options.profile.effective_resolution(None, None),
+            (824, 1000)
+        );
+        for (format, expected) in [
+            (OutputFormat::Cbz, (824, 1200)),
+            (OutputFormat::Epub, (824, 1000)),
+            (OutputFormat::Pdf, (824, 1000)),
+        ] {
+            options.output_format = format;
+            assert_eq!(options.target_resolution(), expected);
+        }
+        for profile in crate::profile::PROFILES.iter().filter(|p| p.code != "KDX") {
+            for format in [OutputFormat::Cbz, OutputFormat::Epub, OutputFormat::Pdf] {
+                let expected = match (format, profile.code) {
+                    (OutputFormat::Epub, "KS3" | "KSCS") => (1920, 2648),
+                    _ => (profile.width, profile.height),
+                };
+                assert_eq!(format.target_resolution(profile, None, None), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn either_custom_dimension_disables_the_kindle_dx_cbz_target() {
+        let mut options = options();
+        options.profile = crate::profile::Profile::by_code("KDX").unwrap();
+        options.output_format = OutputFormat::Cbz;
+        for (width, height, expected) in [
+            (Some(824), None, (824, 1000)),
+            (None, Some(1000), (824, 1000)),
+            (Some(900), None, (900, 1000)),
+            (None, Some(1400), (824, 1400)),
+            (Some(900), Some(1400), (900, 1400)),
+        ] {
+            options.width_override = width;
+            options.height_override = height;
+            assert_eq!(options.target_resolution(), expected);
+        }
+    }
+
+    #[test]
+    fn scribe_epub_width_cap_does_not_apply_to_other_formats_or_custom_dimensions() {
+        let mut options = options();
+        for code in ["KS3", "KSCS"] {
+            options.profile = crate::profile::Profile::by_code(code).unwrap();
+            assert_eq!(
+                (options.profile.width, options.profile.height),
+                (1986, 2648)
+            );
+            for (format, expected) in [
+                (OutputFormat::Epub, (1920, 2648)),
+                (OutputFormat::Cbz, (1986, 2648)),
+                (OutputFormat::Pdf, (1986, 2648)),
+            ] {
+                options.output_format = format;
+                options.width_override = None;
+                options.height_override = None;
+                assert_eq!(options.target_resolution(), expected);
+                options.width_override = Some(1986);
+                assert_eq!(options.target_resolution(), (1986, 2648));
+                options.width_override = None;
+                options.height_override = Some(2648);
+                assert_eq!(options.target_resolution(), (1986, 2648));
+            }
         }
     }
 
@@ -1017,6 +1119,19 @@ mod tests {
         assert_eq!(page.len(), 1);
         assert_eq!(page[0].extension, "png");
         assert_eq!(page[0].bytes, source);
+    }
+
+    #[test]
+    fn oversized_images_are_refused_in_normal_and_passthrough_modes() {
+        let source = crate::test_support::oversized_bmp();
+        for no_processing in [false, true] {
+            let mut options = options();
+            options.no_processing = no_processing;
+            assert!(matches!(
+                process_page(&source, &options, true),
+                Err(crate::Error::ImageTooLarge { .. })
+            ));
+        }
     }
 
     #[test]

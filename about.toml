@@ -1,0 +1,75 @@
+# Used to generate distribution notices, not to change the project's own license.
+accepted = ["MIT", "Apache-2.0", "BSD-3-Clause", "Zlib", "Unicode-3.0"]
+ignore-dev-dependencies = true
+workarounds = ["rustix"]
+
+# The wrapper's metadata omits the license of its bundled native library.
+[bzip2-sys]
+accepted = ["bzip2-1.0.6"]
+[bzip2-sys.clarify]
+license = "MIT AND bzip2-1.0.6"
+[[bzip2-sys.clarify.files]]
+path = "LICENSE-MIT"
+license = "MIT"
+checksum = "c8c6324cf2f0f076e3ed5dea4a21f00bd4dd6fce44f72b110bc52e7fe06f6e1e"
+[[bzip2-sys.clarify.files]]
+path = "bzip2-1.0.8/LICENSE"
+license = "bzip2-1.0.6"
+checksum = "c6dbbf828498be844a89eaa3b84adbab3199e342eb5cb2ed2f0d4ba7ec0f38a3"
+
+# Use the BSD text actually packaged, rather than the manifest's legacy slash expression.
+[brotli-decompressor.clarify]
+license = "BSD-3-Clause"
+[[brotli-decompressor.clarify.files]]
+path = "LICENSE"
+checksum = "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
+
+# These crates package their license under names the scanner does not recognize.
+[constant_time_eq.clarify]
+license = "Apache-2.0"
+[[constant_time_eq.clarify.files]]
+path = "LICENSE-APACHE"
+checksum = "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+
+[ouroboros.clarify]
+license = "MIT"
+[[ouroboros.clarify.files]]
+path = "LICENSE_MIT"
+checksum = "b87740f87cbb0e8be9c4c21db4a265d5f297cd9ee3ea0ff4cf702de819ef6de7"
+[ouroboros_macro.clarify]
+license = "MIT"
+[[ouroboros_macro.clarify.files]]
+path = "LICENSE_MIT"
+checksum = "b87740f87cbb0e8be9c4c21db4a265d5f297cd9ee3ea0ff4cf702de819ef6de7"
+[windows-link.clarify]
+license = "MIT"
+[[windows-link.clarify.files]]
+path = "license-mit"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+[windows-sys.clarify]
+license = "MIT"
+[[windows-sys.clarify.files]]
+path = "license-mit"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+# License files omitted from the published crate archives come from upstream.
+[alloc-stdlib.clarify]
+license = "BSD-3-Clause"
+[[alloc-stdlib.clarify.git]]
+path = "LICENSE"
+checksum = "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
+
+[pathfinder_simd.clarify]
+license = "MIT"
+[[pathfinder_simd.clarify.git]]
+path = "LICENSE-MIT"
+checksum = "0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720"
+
+# Geometry's recorded commit is unavailable. This reachable upstream commit still
+# declares geometry 0.5.1 and is also the published simd 0.5.6 commit.
+[pathfinder_geometry.clarify]
+license = "MIT"
+override-git-commit = "6c3c0466f451c5bd2007087728cd168798cd64e8"
+[[pathfinder_geometry.clarify.git]]
+path = "LICENSE-MIT"
+checksum = "0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720"

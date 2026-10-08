@@ -123,7 +123,10 @@ That expansion exposed two real output defects, handled separately:
 The parity and EPUB follow-ups in PRs #21–#26 have been merged with maintainer approval.
 Documentation and the 0.7.3 package version are
 [prepared, not released](releases.md#073-preparation-not-released).
-A Linux KOReader smoke test is pending; its environment, actual rendering and navigation
-results must be recorded before an explicitly approved tag. Reader appearance and parity
-are separate checks; neither a valid EPUB nor matching KCC proves rendering on a physical
-device, and a desktop reader test does not establish that result either.
+The [Linux desktop KOReader smoke test](releases.md#reader-smoke-test-result-2026-10-08)
+passed its reader scenarios on candidate `5416bee`, with its environment and limits recorded.
+It also exposed a Unix output-permission regression, corrected through the existing staging
+API with CLI tests for all output formats and restrictive masks. Final-commit checks and an
+explicitly approved tag are still required. Reader appearance and parity are separate checks;
+neither a valid EPUB nor matching KCC proves rendering on a physical device, and a desktop
+reader test does not establish that result either.

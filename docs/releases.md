@@ -23,6 +23,7 @@ The audit and pre-release PRs are tracked in [audit follow-ups](audit-follow-ups
 Draft release highlights:
 
 - Preserve existing outputs, validate portable output names, and stage completed writes.
+  Unix output permissions follow ordinary file creation and the user's `umask`.
 - Bound individual input reads, check image dimensions before decoding, and keep folder
   links inside the selected input. These checks are not a whole-process memory limit.
 - Match KCC 12.0.0's format-specific Kindle DX target and Scribe EPUB width cap.
@@ -34,8 +35,8 @@ Draft release highlights:
   books, content assertions and failure controls. This is not exhaustive reader coverage.
 
 The package version is prepared, not published. README installer examples intentionally name
-the available 0.7.2 release. A reader smoke test and verification of the final release commit's
-checks remain necessary before a separately approved tag.
+the available 0.7.2 release. The reader smoke test below is complete for its stated candidate;
+verification of the final release commit's checks remains necessary before a separately approved tag.
 Do not update Mangabound's toolchain pin until verified release assets are available.
 
 ### Reader smoke test
@@ -59,6 +60,30 @@ blocked checks; ADR 0013 already records KOReader's handling of spine-placement 
 Small fixtures do not assess manga quality, and full-size cases stretch synthetic patterns
 only to exercise dimensions. If the test uses desktop KOReader, state that clearly: it
 does not verify a physical Kindle/Kobo, e-ink refresh or device performance.
+
+### Reader smoke test result (2026-10-08)
+
+Candidate `5416bee8ef4b20938097bfc5d50af5693b826824` was tested on Arch Linux x86_64
+with desktop KOReader 2026.07.1, an isolated reader profile and a 536 × 724 viewport
+(half the Kindle 11 dimensions, with the same aspect ratio). The native CLI was built
+with Rust 1.99.0, not the pinned 1.98.1; the repository's CI remains the authority for
+the release compiler.
+
+The gate passed all 19 positive books, both BMP passthrough refusals and the broken-resource
+control. Reader checks passed for rendering, page order/counts, navigation targets, covers,
+metadata, mixed codecs, color and large/custom dimensions. No reader finding blocked release.
+Centered placement and page-side/direction properties were not observable in KOReader,
+as already recorded in ADR 0013. Minor punctuation differences in its information screen
+were not present in the validated OPF. This was not a physical-device, performance or
+real-manga quality test; screenshots and logs were retained by the tester.
+
+The test also found a Unix output-permission regression: staged files retained `tempfile`'s
+0600 default after publication. Staging now requests ordinary file permissions through
+the existing builder API, allowing the kernel to apply `umask` without changing it.
+The temporary and published file share these permissions. CLI regression tests cover
+EPUB, CBZ and PDF, explicit file and directory destinations, and ordinary/group-restricted/
+owner-only masks. Windows staging and book content are unchanged. Recheck the final
+commit's CI, parity and EPUB conformance before tagging.
 
 ## Maintenance
 

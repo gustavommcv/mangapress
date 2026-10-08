@@ -111,6 +111,75 @@ fn supported_page_formats_convert_from_folders_and_cbz_to_every_book_format() {
 }
 
 #[test]
+fn bmp_passthrough_is_rejected_only_for_epub_and_uses_detected_codec() {
+    let input = tempfile::tempdir().unwrap();
+    let page = RgbImage::from_pixel(32, 48, Rgb([40, 80, 160]));
+    let bmp = input.path().join("p01.bmp");
+    page.save_with_format(&bmp, ImageFormat::Bmp).unwrap();
+    let original = fs::read(&bmp).unwrap();
+    // A misleading supported filename must not bypass the format restriction.
+    fs::write(input.path().join("p02.png"), &original).unwrap();
+    let archive_dir = tempfile::tempdir().unwrap();
+    let cbz = archive_dir.path().join("input.cbz");
+    write_cbz(input.path(), &cbz);
+    let original_cbz = fs::read(&cbz).unwrap();
+    for source in [input.path(), cbz.as_path()] {
+        for format in ["epub", "cbz", "pdf"] {
+            let output_dir = tempfile::tempdir().unwrap();
+            let destination = output_dir.path().join(format!("book.{format}"));
+            let output = Command::new(binary())
+                .arg(source)
+                .args([
+                    "--format",
+                    format,
+                    "--noprocessing",
+                    "--json-events",
+                    "--output",
+                ])
+                .arg(&destination)
+                .output()
+                .unwrap();
+            let events = parse_events(&output);
+            if format == "epub" {
+                assert_eq!(output.status.code(), Some(1));
+                assert!(String::from_utf8_lossy(&output.stderr)
+                    .contains("Remove --noprocessing or choose CBZ"));
+                let error = events.last().unwrap();
+                assert_eq!(error["code"], "page_processing_failed");
+                assert_eq!(error["stage"], "process");
+                assert!(error["diagnostic"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Remove --noprocessing or choose CBZ"));
+                assert!(!events.iter().any(|event| event["type"] == "result"));
+                assert_eq!(fs::read_dir(output_dir.path()).unwrap().count(), 0);
+            } else {
+                assert!(output.status.success(), "{source:?}, {format}: {output:?}");
+                assert!(output.stderr.is_empty(), "{source:?}, {format}: {output:?}");
+                assert_eq!(events.last().unwrap()["output_pages"], 2);
+                if format == "cbz" {
+                    let mut book =
+                        zip::ZipArchive::new(fs::File::open(&destination).unwrap()).unwrap();
+                    assert_eq!(book.len(), 2);
+                    for index in 0..book.len() {
+                        let mut entry = book.by_index(index).unwrap();
+                        assert!(entry.name().ends_with(".bmp"));
+                        let mut bytes = Vec::new();
+                        entry.read_to_end(&mut bytes).unwrap();
+                        assert_eq!(bytes, original);
+                    }
+                } else {
+                    assert!(fs::read(destination).unwrap().starts_with(b"%PDF-"));
+                }
+            }
+        }
+    }
+    assert_eq!(fs::read(&bmp).unwrap(), original);
+    assert_eq!(fs::read(input.path().join("p02.png")).unwrap(), original);
+    assert_eq!(fs::read(cbz).unwrap(), original_cbz);
+}
+
+#[test]
 fn an_unsupported_image_renamed_to_png_fails_cleanly_even_in_passthrough() {
     let input = fixture_folder();
     let pnm = b"P6\n1 1\n255\n\x01\x02\x03";

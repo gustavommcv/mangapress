@@ -137,6 +137,12 @@ original image's relative path. Joined spreads and generated webtoon pages do no
 single original filename. The error's `path` continues to identify the input book, not the
 image mentioned in `diagnostic`.
 
+BMP input is supported for normal conversion, but cannot be embedded unchanged in EPUB.
+EPUB with `--noprocessing` therefore rejects a BMP page during processing with
+`page_processing_failed`; its diagnostic recommends removing the flag or choosing CBZ.
+The decision uses the detected image format, even if the file has another recognized extension.
+Dry-run still inspects entries without validating every image's decodability or embedding format.
+
 If stdout closes or a JSON event cannot be written, the process fails with exit code 1; a
 complete final error event may itself be impossible to emit. This differs from human profile
 lists and dry-run summaries, which stop quietly when a pipe's reader closes early.

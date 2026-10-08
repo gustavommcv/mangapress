@@ -171,7 +171,8 @@ pub struct Cli {
     pub noquantize: bool,
 
     /// Leave every image exactly as it is: no cropping, resizing or
-    /// recoding, whatever the profile and the other options say.
+    /// recoding, whatever the profile and the other options say. EPUB cannot
+    /// embed unchanged BMP pages; remove this flag or choose CBZ for those.
     #[arg(long, help_heading = "Conversion", display_order = 6)]
     pub noprocessing: bool,
 

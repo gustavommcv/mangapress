@@ -96,6 +96,10 @@ of images, or a folder containing chapter subfolders. Pages can be JPEG (`.jpg` 
 PNG, GIF, BMP, or WebP. Other image formats are not decoded, even if renamed to a supported
 extension. CBR, CB7, EPUB, and PDF input are not supported.
 
+`--noprocessing` preserves image bytes instead of converting them. BMP pages cannot be
+embedded unchanged in EPUB: remove that flag to convert them, or use CBZ to keep the originals.
+The restriction is detected during processing, not by `--dry-run`.
+
 Inside folder input, symbolic links are followed only to regular files within that folder.
 External, broken, and directory links are skipped with a warning, including on `--dry-run`.
 If you intentionally use external links, copy their files into the input instead.

@@ -543,27 +543,36 @@ fn build_ncx(
     chapter_hrefs: &[String],
     nested: bool,
 ) -> String {
-    let mut order = 0usize;
+    let mut id = 0usize;
+    // NCX entries sharing a content target must share playOrder, even when
+    // their IDs and labels differ (a volume and its first chapter, or aliases).
+    let mut targets = std::collections::HashMap::new();
+    let mut play_order = |href: &str| {
+        let next = targets.len() + 1;
+        *targets.entry(href.to_owned()).or_insert(next)
+    };
     let nav_points: String = if nested {
         group_by_volume(chapters, chapter_hrefs)
             .into_iter()
             .map(|volume| {
-                order += 1;
-                let volume_order = order;
+                id += 1;
+                let volume_id = id;
+                let volume_order = play_order(volume.chapters[0].1);
                 let children: String = volume
                     .chapters
                     .iter()
                     .map(|(chapter, href)| {
-                        order += 1;
+                        id += 1;
+                        let chapter_order = play_order(href);
                         format!(
-                            r#"<navPoint id="chapter{order}" playOrder="{order}"><navLabel><text>{title}</text></navLabel><content src="{href}"/></navPoint>"#,
+                            r#"<navPoint id="chapter{id}" playOrder="{chapter_order}"><navLabel><text>{title}</text></navLabel><content src="{href}"/></navPoint>"#,
                             title = xml_escape(&chapter.title),
                         )
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
                 format!(
-                    r#"<navPoint id="volume{volume_order}" playOrder="{volume_order}"><navLabel><text>{title}</text></navLabel><content src="{href}"/>
+                    r#"<navPoint id="volume{volume_id}" playOrder="{volume_order}"><navLabel><text>{title}</text></navLabel><content src="{href}"/>
 {children}
 </navPoint>"#,
                     title = xml_escape(&volume.title),
@@ -577,9 +586,10 @@ fn build_ncx(
             .iter()
             .zip(chapter_hrefs)
             .map(|(chapter, href)| {
-                order += 1;
+                id += 1;
+                let chapter_order = play_order(href);
                 format!(
-                    r#"<navPoint id="chapter{order}" playOrder="{order}"><navLabel><text>{title}</text></navLabel><content src="{href}"/></navPoint>"#,
+                    r#"<navPoint id="chapter{id}" playOrder="{chapter_order}"><navLabel><text>{title}</text></navLabel><content src="{href}"/></navPoint>"#,
                     title = xml_escape(&chapter.title),
                 )
             })
@@ -592,7 +602,7 @@ fn build_ncx(
 <ncx version="2005-1" xml:lang="{lang}" xmlns="http://www.daisy.org/z3986/2005/ncx/">
 <head>
 <meta name="dtb:uid" content="{identifier}"/>
-<meta name="dtb:depth" content="1"/>
+<meta name="dtb:depth" content="{depth}"/>
 <meta name="dtb:totalPageCount" content="0"/>
 <meta name="dtb:maxPageNumber" content="0"/>
 <meta name="generated" content="true"/>
@@ -605,6 +615,7 @@ fn build_ncx(
         lang = xml_escape(&options.language),
         identifier = xml_escape(identifier),
         title = xml_escape(&options.title),
+        depth = if nested { 2 } else { 1 },
     )
 }
 
@@ -1173,11 +1184,8 @@ mod tests {
         assert!(ncx.contains("c001 - Gamma"));
         // Volume 1's navPoint must actually contain (not just precede) its
         // two chapters' navPoints - this is the real regression this
-        // feature is for, not just "every label shows up somewhere". Ids
-        // aren't sequential per type (volume1, volume2, ...): playOrder is
-        // one shared, strictly sequential counter across every navPoint,
-        // parent and child alike, as NCX requires - so the second volume's
-        // id is whatever order it lands on, not necessarily "volume2".
+        // feature is for, not just "every label shows up somewhere". IDs are
+        // unique across nodes; playOrder instead counts distinct targets.
         let volume_starts: Vec<usize> = ncx
             .match_indices("<navPoint id=\"volume")
             .map(|(i, _)| i)
@@ -1207,6 +1215,62 @@ mod tests {
         assert_eq!(nav.matches("<ol>").count(), 4, "plus the page list's own");
         assert!(nav.contains("v001 - Vol.01"));
         assert!(nav.contains("v002 - Vol.02"));
+    }
+
+    #[test]
+    fn ncx_play_order_counts_targets_not_nodes_and_depth_matches_the_tree() {
+        let chapters = nested_sample_chapters();
+        for (nested, bookmarks, expected_orders, expected_depth) in [
+            (true, vec![], vec![1, 1, 2, 3, 3], "2"),
+            (false, vec![], vec![1, 2, 3], "1"),
+            (
+                true,
+                vec![(0, "Opening"), (0, "Alias"), (2, "Later")],
+                vec![1, 1, 2],
+                "1",
+            ),
+        ] {
+            let mut options = default_options();
+            options.nested_toc = nested;
+            options.bookmarks = bookmarks
+                .into_iter()
+                .map(|(index, label)| (index, label.to_string()))
+                .collect();
+            let ncx = read_entry(build_epub(&chapters, &options).unwrap(), "OEBPS/toc.ncx");
+            let document = roxmltree::Document::parse(&ncx).unwrap();
+            let nodes: Vec<_> = document
+                .descendants()
+                .filter(|node| node.has_tag_name("navPoint"))
+                .collect();
+            let ids: std::collections::HashSet<_> = nodes
+                .iter()
+                .map(|node| node.attribute("id").unwrap())
+                .collect();
+            assert_eq!(ids.len(), nodes.len(), "every navigation ID must be unique");
+            let orders: Vec<usize> = nodes
+                .iter()
+                .map(|node| node.attribute("playOrder").unwrap().parse().unwrap())
+                .collect();
+            assert_eq!(orders, expected_orders);
+            let mut target_orders = std::collections::HashMap::new();
+            for (node, order) in nodes.iter().zip(orders) {
+                let target = node
+                    .children()
+                    .find(|child| child.has_tag_name("content"))
+                    .unwrap()
+                    .attribute("src")
+                    .unwrap();
+                if let Some(previous) = target_orders.insert(target, order) {
+                    assert_eq!(order, previous, "the same target must keep its playOrder");
+                }
+            }
+            let depth = document
+                .descendants()
+                .find(|node| node.attribute("name") == Some("dtb:depth"))
+                .unwrap()
+                .attribute("content");
+            assert_eq!(depth, Some(expected_depth));
+        }
     }
 
     #[test]

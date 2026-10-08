@@ -1,8 +1,9 @@
-# Comparing image processing with KCC
+# Comparing mangapress with KCC
 
 These tools run mangapress and [KCC](https://github.com/ciromattia/kcc) **12.0.0** on the same
-images and compare their results. Use them for changes that affect processed pixels. They run
-separately from `cargo test`.
+synthetic images and compare processed pages and books produced by the real CLIs. Use them for
+image-processing, metadata, and book-output changes. They run separately from `cargo test`.
+The [coverage map](coverage.md) distinguishes direct comparisons, Rust tests, and remaining gaps.
 
 ## Run the comparison
 
@@ -15,10 +16,12 @@ Use a virtual environment if you do not want to change your Python installation:
 python -m pip install -r tools/parity/requirements.txt
 git clone --depth 1 --branch v12.0.0 https://github.com/ciromattia/kcc ../kcc-reference
 python tools/parity/parity.py --kcc ../kcc-reference
+python tools/parity/books.py --kcc ../kcc-reference
 ```
 
-The driver supplies substitutes for KCC imports that the comparison does not use, so the full
-KCC dependency set is not required. A failing comparison lists differences and exits nonzero.
+Sorting and filename sanitization use real `natsort` and `python-slugify` dependencies. Only
+unused PDF and MozJPEG imports have substitutes; neither feature is exercised. The full GUI
+dependency set and external archive tools are not required. A failing comparison exits nonzero.
 
 - `--profile CODE` selects a built-in device profile; the default is `K11`.
 - `--smoke` runs three representative scenarios: default processing, CBZ padding, and color
@@ -28,6 +31,9 @@ KCC dependency set is not required. A failing comparison lists differences and e
   fresh work folder. It cannot be combined with `--smoke`.
 - `--pages DIR` adds your own pages to the default and color-output scenarios.
 - `--work DIR` changes the output folder; the default is the ignored `target/parity/`.
+- `--extended` adds pre-release boundary/option interactions. `books.py` also accepts it to
+  check more metadata modes, devices, color PNG, and JPEG qualities 1, 50, 85, 90, and 100.
+  Its ordinary run checks quality 85 and the profile default, alongside the basic book cases.
 
 Inspect the generated PNGs from both tools when investigating a difference. Keep private pages
 outside the repository; the built-in corpus uses generated images.
@@ -60,10 +66,32 @@ The dither checks use 16-, 15-, and 4-level palettes.
 The pixel tolerance accounts for JPEG encoding and decoding differences. A passing comparison
 applies to the tested scenarios; it is not a guarantee for every image, option, or device.
 
+Book comparisons run KCC's actual CLI entry point and the built mangapress executable on small
+chapter folders. They read each generated archive and compare:
+
+- ordered page images, geometry, grayscale/color classification, and decoded pixels;
+- EPUB title, creators, language, summary, reading direction, layout metadata, and page sides;
+- NCX and EPUB3 table-of-contents labels and their actual spine-page targets;
+- the declared cover and its processed pixels;
+- PNG bit depth/color type and JPEG quantization tables, not identical compression bytes;
+- exact source-image bytes in passthrough mode, retained CBZ ComicInfo, and unchanged inputs.
+
+Only KCC's documented Kindle GIF versus mangapress PNG difference is allowed between page
+codecs in the tested Kindle EPUBs. UUIDs, generator names, timestamps, internal filenames,
+and ZIP serialization are not compared. Image tolerances are the same as the page checks.
+Negative-control tests ensure missing/reordered pages, broken references, changed metadata,
+wrong codecs/quality, and altered passthrough bytes cannot produce a successful comparison.
+
+KCC cleans temporary `KCC-*` folders during conversion. Book checks give each subprocess a fresh
+temporary root inside its own output folder; they never use the system temporary root. Input
+fixtures and generated books remain under `--work` for diagnosis. Temporary conversion files
+are removed when each case ends. Repeat runs use fresh case folders, not stale books.
+
 ## Limits
 
 The main scenarios use the selected profile. Four explicitly labelled custom-resolution
-regressions always use `KDX` or `KS3`. The upright-spread scenario always uses `KoC` (1072 × 1448),
+regressions always use `KDX` or `KS3`; boundary cases use `OTHER` with explicit dimensions.
+The upright-spread scenario always uses `KoC` (1072 × 1448),
 matching the original Kindle 11 baseline without KCC's deliberate Kindle EPUB cap. These
 fixed-profile cases are labelled with their actual code in the output.
 
@@ -71,8 +99,11 @@ Webtoon checks use the selected profile's effective EPUB target, obtained from K
 option resolver, including the Scribe width cap. The exact dither check still
 exercises all three palettes (`K11`, `K2`, `K1`), independently of the selected device.
 
-The comparison does not verify EPUB markup and navigation, covers, labelled-spread joining,
-or the encoded archive bytes. Relevant Rust tests cover those separately. See
+Books exercise selected EPUB/CBZ behavior, not every markup attribute or every option pairing.
+PDF books, labelled-spread joining, ComicInfo bookmarks, external/Covers-folder selection, and
+every smart-cover threshold are not directly compared. Relevant Rust tests cover them separately.
+Some tiny crop inputs crash KCC's edge detector; crop-boundary fixtures use nonempty edge strips.
+See the coverage map for other gaps and
 [ADR 0013](../../docs/adr/0013-follow-a-named-kcc-release.md) for deliberate differences, including
 PNG rather than GIF for quantized Kindle EPUB pages and the size of upright spreads.
 
@@ -85,17 +116,28 @@ KCC 12.0.0 at commit `f127adbca992456e173d88ada18643eae66802fb` and the dependen
 then smoke checks for `K1`, `K2`, `KDX`, `KS3`, `KCS`, `KoLC`, and `RmkPPMove`. This spans all
 three grayscale palettes, old Kindle defaults, large screens, color devices, and each family.
 A separate `KS3` webtoon check also exercises its format-specific target.
+Routine CI adds the small boundary matrix and ten CLI-to-book cases.
 
 It runs on Linux and supplements, rather than replaces, the three-platform Rust CI. There is
-no schedule or latest-release monitor. `workflow_dispatch` also permits a manual run; reviewing
+no schedule or latest-release monitor. `workflow_dispatch` permits a manual run, with an
+`extended` checkbox for the pre-release cases; reviewing
 a new KCC release remains the contributor's responsibility below. Generated images and KCC's
 checkout stay under ignored `target/` and are not shipped in the application.
-The release workflow also calls this comparison on each tagged commit before packaging.
+The release workflow calls this comparison with `extended: true` on each tagged commit before
+packaging. This adds three boundary interactions and increases the book matrix to 23 cases.
+You can run the same extended checks locally before proposing a release:
+
+```sh
+python tools/parity/parity.py --kcc ../kcc-reference --extended
+python tools/parity/books.py --kcc ../kcc-reference --extended
+```
+
 Changing `rust-toolchain.toml` triggers the PR/main comparison as well.
 
 ## Files
 
 - [parity.py](parity.py): scenarios and comparisons.
+- [books.py](books.py): actual CLI-to-book comparisons and semantic archive inspection.
 - [kcc_oracle.py](kcc_oracle.py): calls KCC from its checkout.
 - [make_corpus.py](make_corpus.py): generates the test images.
 - [parity_dump.rs](../../crates/mangapress-core/examples/parity_dump.rs): runs mangapress's pipeline

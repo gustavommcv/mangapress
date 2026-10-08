@@ -15,7 +15,7 @@ verified remote checks for the exact commit, as described in [CONTRIBUTING](../C
 | CI and release checks | 13 | Implemented in [PR #18](https://github.com/gustavommcv/mangapress/pull/18); pinned tools/actions, locked checks, advisory checks, and shared release gates |
 | Installer checksums and version selection | 13 | Implemented in [PR #19](https://github.com/gustavommcv/mangapress/pull/19); version-pinned downloads, checksum checks, and installed license notices |
 | CLI diagnostics, help, and documentation | 8, 10, 15 | Implemented in [PR #20](https://github.com/gustavommcv/mangapress/pull/20); quiet human pipe closure, source-page diagnostics, grouped help, and documented streams/exit codes |
-| Final pre-release parity review | Follow-up to 16 | Planned after the audit PRs, before the next release |
+| Final pre-release parity review | Follow-up to 16 | Prepared for review: [coverage inventory](../tools/parity/coverage.md), boundary cases and real CLI-to-book comparisons; extended release gate |
 
 Finding 18's failure-path tests accompany the relevant fixes. The allocator/distribution
 benchmark (14) and the large orchestration refactor (17) are deferred, not resolved.

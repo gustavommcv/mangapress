@@ -48,11 +48,12 @@ Add regression tests for changed behavior and relevant error cases. Keep fixture
 synthetic; see [tests/fixtures/README.md](tests/fixtures/README.md). Real pages used to investigate
 a problem belong in the ignored `tests/fixtures/real/` folder and must not be committed.
 
-For changes that affect processed pixels, also run the [KCC comparison](tools/parity/README.md).
-Install its small Python dependency set and provide a separate KCC checkout, as described there.
-It supplements Rust tests and covers only its listed scenarios and profiles. The comparison
-workflow runs the full Kindle 11 matrix and representative device checks for relevant PRs;
-verify that run for the exact commit as well as the three-platform Rust CI.
+For image-processing or book-output changes, also run the [KCC comparisons](tools/parity/README.md).
+Install the small Python dependency set and provide a separate KCC checkout, as described there.
+They supplement Rust tests and cover only their [listed scenarios and gaps](tools/parity/coverage.md).
+The comparison workflow runs the full Kindle 11 matrix, representative device checks, and
+small CLI-to-book cases for relevant PRs; release checks add the extended cases.
+Verify that run for the exact commit as well as the three-platform Rust CI.
 
 KCC 12.0.0 is the current reference. Preserve the implementation and licensing boundary in
 [ADR 0007](docs/adr/0007-gplv3-boundary-kcc-image-rs.md), and follow

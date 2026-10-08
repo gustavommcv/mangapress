@@ -6,7 +6,8 @@ verify the exact commit's remote checks, and merge it into `main` before pushing
 
 The tag workflow validates the Cargo version and checks that the tagged commit belongs to
 `main`. It then calls the same CI and KCC comparison workflows used for PRs, on that exact
-commit, before building the four existing release targets. A failing validation, test,
+commit, with the extended pre-release parity cases enabled, before building the four existing
+release targets. A failing validation, test,
 advisory check, notice generation, comparison, or build blocks publication.
 
 Only the publication job has repository write permission. It downloads the `mangapress-*`

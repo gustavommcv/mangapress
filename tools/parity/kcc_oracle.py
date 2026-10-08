@@ -8,34 +8,38 @@ copied into this repository.
 
     kcc_oracle.py <kcc_checkout> <out_dir> <list_file> [kcc-c2e arguments...]
     kcc_oracle.py <kcc_checkout> <out_dir> --webtoon-dir <directory> <width> <height>
+    kcc_oracle.py <kcc_checkout> <out_dir> --book <isolated_temp_dir> [kcc-c2e arguments...]
 
 The first line of the list is the book's first page. Output: one PNG per
 page produced, and `kcc.json` describing them.
+Book mode calls KCC's real CLI entry point on generated folders.
 """
 
 import inspect
 import json
 import os
+from pathlib import Path
 import shutil
 import sys
+import tempfile
 import types
 from argparse import Namespace
 
 
+def unavailable_codec(*args, **kwargs):
+    raise RuntimeError("the parity oracle does not exercise MozJPEG; install its real dependency to use it")
+
+
 def load_kcc(checkout):
-    # KCC imports these at module level for features this driver never
-    # reaches (file sorting, PDF input, MozJPEG). Stand-ins keep the import
-    # working without the full KCC dependency set. The comparison's small
-    # dependency set is recorded in requirements.txt next to this file.
+    # Sorting and filename sanitization use the real development dependencies,
+    # including in book comparisons. Only unused PDF/MozJPEG imports get stubs.
     for name, attributes in {
-        "natsort": {"os_sort_keygen": lambda: (lambda value: value), "os_sorted": sorted},
-        "slugify": {"slugify": lambda *args, **kwargs: args[0]},
         "pymupdf": {},
-        "mozjpeg_lossless_optimization": {"optimize": lambda data: data},
+        "mozjpeg_lossless_optimization": {"optimize": unavailable_codec},
     }.items():
         try:
             __import__(name)
-        except Exception:
+        except ImportError:
             module = types.ModuleType(name)
             module.__dict__.update(attributes)
             sys.modules[name] = module
@@ -44,6 +48,21 @@ def load_kcc(checkout):
     from kindlecomicconverter import comic2ebook, comic2panel, image
 
     return kindlecomicconverter.__version__, comic2ebook, comic2panel, image
+
+
+def run_book(checkout, out_dir, temporary, arguments):
+    # KCC removes KCC-* directories from its temporary root. Never let a
+    # comparison reach the user's system temporary directory.
+    temporary = Path(temporary).resolve()
+    if temporary.parent != Path(out_dir).resolve() or any(temporary.iterdir()):
+        raise SystemExit("book comparison requires a fresh temporary directory inside its output")
+    for variable in ("TMPDIR", "TEMP", "TMP"):
+        os.environ[variable] = str(temporary)
+    tempfile.tempdir = str(temporary)
+    # Windows spawn workers import this driver before unpickling KCC tasks.
+    os.environ["MANGAPRESS_PARITY_KCC"] = os.path.abspath(checkout)
+    _, comic2ebook, _, _ = load_kcc(checkout)
+    raise SystemExit(comic2ebook.main(arguments))
 
 
 def run_pages(checkout, out_dir, list_file, arguments):
@@ -110,10 +129,16 @@ def run_webtoon(checkout, out_dir, directory, width, height):
     print(f"KCC {version}: {len(os.listdir(out_dir))} webtoon pages")
 
 
+if os.environ.get("MANGAPRESS_PARITY_KCC"):
+    load_kcc(os.environ["MANGAPRESS_PARITY_KCC"])
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 4:
         raise SystemExit(__doc__)
-    if sys.argv[3] == "--webtoon-dir":
+    if sys.argv[3] == "--book":
+        run_book(sys.argv[1], sys.argv[2], sys.argv[4], sys.argv[5:])
+    elif sys.argv[3] == "--webtoon-dir":
         run_webtoon(sys.argv[1], sys.argv[2], sys.argv[4], int(sys.argv[5]), int(sys.argv[6]))
     else:
         run_pages(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:])

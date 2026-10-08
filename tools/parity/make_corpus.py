@@ -141,6 +141,29 @@ def write(directory):
         save("colour_spread.png", Image.merge("RGB", [band.point(lambda v, k=k: int(v * k)) for band, k in zip(two.split(), (0.9, 1.0, 0.8))])),
     ]
 
+    # Small, asymmetric inputs expose ordering, alpha handling, and rounding
+    # without multiplying the existing large-page matrix.
+    edges = []
+    for width, height in ((127, 191), (193, 127), (127, 128), (128, 128), (129, 128)):
+        image = Image.new("RGB", (width, height), "white")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, width // 2 - 1, height - 1), fill=(35, 35, 35))
+        draw.rectangle((width // 2, height // 3, width - 1, height - 1), fill=(165, 165, 165))
+        edges.append(save(f"edge_{width}x{height}.png", image))
+    rgba = Image.new("RGBA", (127, 191), (220, 70, 30, 0))
+    ImageDraw.Draw(rgba).rectangle((25, 35, 100, 155), fill=(10, 130, 180, 128))
+    edges.append(save("edge_rgba.png", rgba))
+    indexed = rgba.convert("RGB").quantize(colors=8)
+    indexed.info["transparency"] = 0
+    edges.append(save("edge_indexed_alpha.png", indexed))
+    crop_edges = []
+    for inset in (39, 40, 41):
+        # Keep edge strips nonempty in the upstream crop detector; some
+        # smaller dimensions trigger its zero-area histogram bug.
+        image = Image.new("L", (400, 600), 255)
+        ImageDraw.Draw(image).rectangle((inset, 60, 399 - inset, 539), fill=20)
+        crop_edges.append(save(f"crop_cap_{inset}.png", image))
+
     webtoon = {}
     for name, background, pieces in (
         ("webtoon_white", (255, 255, 255), [(2000, [(100, 600), (900, 1000)]), (2000, [(0, 1100)]), (2000, [(200, 400), (800, 1100)]), (1500, [(150, 1100)])]),
@@ -153,7 +176,8 @@ def write(directory):
             strip(200 + n, 800, height, spans, background).save(os.path.join(chapter, f"{n:03d}.png"))
         webtoon[name] = os.path.abspath(chapter)
 
-    return {"pages": plain + extra, "spreads": spreads, "colour": colour, "webtoon": webtoon}
+    return {"pages": plain + extra, "spreads": spreads, "colour": colour, "webtoon": webtoon,
+            "edges": edges, "crop_edges": crop_edges}
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ dependency set and external archive tools are not required. A failing comparison
 - `--extended` adds pre-release boundary/option interactions. `books.py` also accepts it to
   check more metadata modes, devices, color PNG, and JPEG qualities 1, 50, 85, 90, and 100.
   Its ordinary run checks quality 85 and the profile default, alongside the basic book cases.
+  `books.py` also accepts `--only TEXT`, repeated for a union; a filter matching nothing fails.
 
 Inspect the generated PNGs from both tools when investigating a difference. Keep private pages
 outside the repository; the built-in corpus uses generated images.
@@ -77,6 +78,18 @@ chapter folders. They read each generated archive and compare:
 - PNG bit depth/color type and JPEG quantization tables, not identical compression bytes;
 - exact source-image bytes in passthrough mode, retained CBZ ComicInfo, and unchanged inputs.
 
+Three generated books go beyond the small chapter folders, each as one chapter of lossless
+output pages so that reading and processing are compared, not compression:
+
+- **stored forms of a page**: embedded color profiles, four-channel JPEG of both kinds,
+  16-bit PNG with color or transparency, palettes with and without transparent entries,
+  1-, 2- and 4-bit PNG, gray with transparency, every JPEG chroma layout, progressive JPEG,
+  GIF and WebP including two-frame files, content that does not match its extension, and
+  orientation tags, which neither tool applies;
+- **page shapes**: from one pixel to very long strips, around square, around the ratios where
+  a wide page becomes a spread and where a spread is cut in two, and around the screen;
+- **the gray-or-color decision**: a page on each side of every boundary of that decision.
+
 Only KCC's documented Kindle GIF versus mangapress PNG difference is allowed between page
 codecs in the tested Kindle EPUBs. UUIDs, generator names, timestamps, internal filenames,
 and ZIP serialization are not compared. Image tolerances are the same as the page checks.
@@ -106,6 +119,8 @@ option resolver, including the Scribe width cap. The exact dither check still
 exercises all three palettes (`K11`, `K2`, `K1`), independently of the selected device.
 
 Books exercise selected EPUB/CBZ behavior, not every markup attribute or every option pairing.
+The generated books above are single-chapter folders. A 16-bit gray PNG, a file cut short,
+and AVIF or JPEG 2000 pages are left out of them because the tools differ there.
 PDF books, labelled-spread joining, ComicInfo bookmarks, external/Covers-folder selection, and
 every smart-cover threshold are not directly compared. Relevant Rust tests cover them separately.
 Some tiny crop inputs crash KCC's edge detector; crop-boundary fixtures use nonempty edge strips.
@@ -122,7 +137,7 @@ KCC 12.0.0 at commit `f127adbca992456e173d88ada18643eae66802fb` and the dependen
 then smoke checks for `K1`, `K2`, `KDX`, `KS3`, `KCS`, `KoLC`, and `RmkPPMove`. This spans all
 three grayscale palettes, old Kindle defaults, large screens, color devices, and each family.
 A separate `KS3` webtoon check also exercises its format-specific target.
-Routine CI adds the small boundary matrix and ten CLI-to-book cases.
+Routine CI adds the small boundary matrix and thirteen CLI-to-book cases.
 
 It runs on Linux and supplements, rather than replaces, the three-platform Rust CI. There is
 no schedule or latest-release monitor. `workflow_dispatch` permits a manual run, with an
@@ -130,7 +145,7 @@ no schedule or latest-release monitor. `workflow_dispatch` permits a manual run,
 a new KCC release remains the contributor's responsibility below. Generated images and KCC's
 checkout stay under ignored `target/` and are not shipped in the application.
 The release workflow calls this comparison with `extended: true` on each tagged commit before
-packaging. This adds three boundary interactions and increases the book matrix to 23 cases.
+packaging. This adds three boundary interactions and increases the book matrix to 29 cases.
 You can run the same extended checks locally before proposing a release:
 
 ```sh
@@ -147,6 +162,7 @@ Changing `rust-toolchain.toml` triggers the PR/main comparison as well.
 - [epub_book.py](../epub_book.py): shared semantic EPUB inspection, also used by the conformance gate.
 - [kcc_oracle.py](kcc_oracle.py): calls KCC from its checkout.
 - [make_corpus.py](make_corpus.py): generates the test images.
+- [book_inputs.py](book_inputs.py): generates the books of stored forms, shapes and decision boundaries.
 - [parity_dump.rs](../../crates/mangapress-core/examples/parity_dump.rs): runs mangapress's pipeline
   and writes pages for comparison.
 

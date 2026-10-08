@@ -304,3 +304,62 @@ fn a_processing_failure_removes_staging_and_preserves_the_existing_book() {
     assert_eq!(fs::read(destination).unwrap(), b"previous book");
     assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
 }
+
+#[cfg(unix)]
+#[test]
+fn output_permissions_follow_umask_for_all_formats_and_destinations() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let input = fixture_folder();
+    for (umask, expected) in [("022", 0o644), ("027", 0o640), ("077", 0o600)] {
+        for format in ["epub", "cbz", "pdf"] {
+            for as_directory in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let directory = root.path().join("books");
+                fs::create_dir(&directory).unwrap();
+                let destination = if as_directory {
+                    directory.clone()
+                } else {
+                    directory.join(format!("book.{format}"))
+                };
+                // Set umask only in the child, never in the parallel test process.
+                // Paths are arguments, not interpolated into the shell program.
+                let output = Command::new("sh")
+                    .args([
+                        "-c",
+                        "umask \"$1\"; shift; exec \"$@\"",
+                        "mangapress-output-permissions",
+                        umask,
+                    ])
+                    .arg(binary())
+                    .arg(input.path())
+                    .args([
+                        "--format",
+                        format,
+                        "--noprocessing",
+                        "--json-events",
+                        "--output",
+                    ])
+                    .arg(&destination)
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{format}, umask {umask}, directory {as_directory}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                let events = parse_events(&output);
+                let result = events.last().unwrap();
+                assert_eq!(result["type"], "result");
+                let path = Path::new(result["output_path"].as_str().unwrap());
+                assert_eq!(
+                    fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                    expected,
+                    "{format}, umask {umask}, directory {as_directory}"
+                );
+                assert_eq!(path.parent().unwrap(), directory);
+                assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+            }
+        }
+    }
+}

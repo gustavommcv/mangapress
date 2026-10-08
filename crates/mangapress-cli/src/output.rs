@@ -71,7 +71,7 @@ pub fn plan(input: &Path, output: Option<&Path>, extension: &str, kepub: bool) -
     })
 }
 
-/// A private sibling file: the final path is not opened until all bytes have
+/// A uniquely named sibling file: the final path is not opened until all bytes have
 /// been written and synchronized. Drop cleans up ordinary error paths.
 pub struct StagedOutput {
     file: NamedTempFile,
@@ -82,10 +82,16 @@ impl StagedOutput {
     /// The caller creates missing parents first, so directory-creation failures
     /// can keep their existing machine-protocol code.
     pub fn new(destination: &Path) -> io::Result<Self> {
-        let file = tempfile::Builder::new()
-            .prefix(".mangapress-")
-            .suffix(".tmp")
-            .tempfile_in(parent(destination)?)?;
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(".mangapress-").suffix(".tmp");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // Match File::create; the kernel applies the user's umask. Publication
+            // retains these permissions instead of tempfile's private 0600 default.
+            builder.permissions(fs::Permissions::from_mode(0o666));
+        }
+        let file = builder.tempfile_in(parent(destination)?)?;
         Ok(Self {
             file,
             destination: destination.to_path_buf(),

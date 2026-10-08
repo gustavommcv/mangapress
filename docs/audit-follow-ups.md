@@ -6,15 +6,15 @@ verified remote checks for the exact commit, as described in [CONTRIBUTING](../C
 
 | Topic | Findings | Status |
 | --- | --- | --- |
-| Bounded input reads and image checks | 1, 2 | In progress; policy in [ADR 0015](adr/0015-bounded-input-reads.md) |
-| Output names, validation, and atomic writes | 3–6 | In progress; policy in [ADR 0016](adr/0016-safe-output-planning-and-publication.md) |
-| Symbolic-link policy | 9 | In progress; approved containment policy in [ADR 0017](adr/0017-folder-links-stay-inside-the-input.md) |
-| Kindle DX and broader parity coverage | 7, 16 | In progress; format-specific target and [multi-profile comparison](../tools/parity/README.md) |
-| Dependency cleanup | 11 | In progress; unused crates removed and image codecs restricted to the supported page formats |
-| Distributed dependency license notices | 12 | In progress; target-specific source notices generated and checked for release archives |
-| CI and release checks | 13 | In progress; pinned tools/actions, locked checks, advisory checks, and shared release gates |
-| Installer checksums and version selection | 13 | In progress; version-pinned downloads, checksum checks, and installed license notices |
-| CLI diagnostics, help, and documentation | 8, 10, 15 | In progress; quiet human pipe closure, source-page diagnostics, grouped help, and documented streams/exit codes |
+| Bounded input reads and image checks | 1, 2 | Implemented in [PR #12](https://github.com/gustavommcv/mangapress/pull/12); policy in [ADR 0015](adr/0015-bounded-input-reads.md) |
+| Output names, validation, and atomic writes | 3–6 | Implemented in [PR #13](https://github.com/gustavommcv/mangapress/pull/13); policy in [ADR 0016](adr/0016-safe-output-planning-and-publication.md) |
+| Symbolic-link policy | 9 | Implemented in [PR #14](https://github.com/gustavommcv/mangapress/pull/14); containment policy in [ADR 0017](adr/0017-folder-links-stay-inside-the-input.md) |
+| Kindle DX and broader parity coverage | 7, 16 | Implemented in [PR #15](https://github.com/gustavommcv/mangapress/pull/15); format-specific target and [multi-profile comparison](../tools/parity/README.md) |
+| Dependency cleanup | 11 | Implemented in [PR #16](https://github.com/gustavommcv/mangapress/pull/16); unused crates removed and image codecs restricted to supported page formats |
+| Distributed dependency license notices | 12 | Implemented in [PR #17](https://github.com/gustavommcv/mangapress/pull/17); target-specific source notices generated and checked for release archives |
+| CI and release checks | 13 | Implemented in [PR #18](https://github.com/gustavommcv/mangapress/pull/18); pinned tools/actions, locked checks, advisory checks, and shared release gates |
+| Installer checksums and version selection | 13 | Implemented in [PR #19](https://github.com/gustavommcv/mangapress/pull/19); version-pinned downloads, checksum checks, and installed license notices |
+| CLI diagnostics, help, and documentation | 8, 10, 15 | Implemented in [PR #20](https://github.com/gustavommcv/mangapress/pull/20); quiet human pipe closure, source-page diagnostics, grouped help, and documented streams/exit codes |
 | Final pre-release parity review | Follow-up to 16 | Planned after the audit PRs, before the next release |
 
 Finding 18's failure-path tests accompany the relevant fixes. The allocator/distribution

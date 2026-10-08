@@ -17,3 +17,4 @@
 15. [Bound input reads and check image dimensions before decoding](0015-bounded-input-reads.md)
 16. [Follow KCC's non-overwriting output names and stage completed writes](0016-safe-output-planning-and-publication.md)
 17. [Follow folder links only to regular files inside the selected input](0017-folder-links-stay-inside-the-input.md)
+18. [Use the standard EPUB property for centered spine items](0018-standard-centered-spine-property.md) — proposed narrow exception to 13

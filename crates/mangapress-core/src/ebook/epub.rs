@@ -34,6 +34,8 @@
 //! page early (see [`bookmark_toc`]); and the two stylesheet rules are
 //! written into each page instead of a shared `style.css`. Not carried over:
 //! everything that only exists for Kindle's Panel View.
+//! Centered spine items always use the reserved `rendition:` property;
+//! KCC's bare Kindle spelling is undefined (ADR 0018).
 
 use super::Chapter;
 use crate::error::{Error, Result};
@@ -57,8 +59,8 @@ pub struct EpubOptions {
     /// every existing input and output byte-for-byte unchanged.
     pub nested_toc: bool,
     /// The device profile is a Kindle one (upstream's `iskindle`): every page
-    /// carries upstream's hidden first block, and spine items are tagged
-    /// `page-spread-*` the Kindle way rather than `rendition:page-spread-*`.
+    /// carries upstream's hidden first block, and left/right spine items use
+    /// the older `page-spread-*` spelling. Center uses `rendition:` on every family.
     pub kindle: bool,
     /// The effective EPUB target for an unmodified Kindle profile,
     /// including Scribe's width cap — writes the Kindle fixed-layout `<meta>` block,
@@ -297,15 +299,17 @@ pub fn build_epub(chapters: &[Chapter], options: &EpubOptions) -> Result<Vec<u8>
         .enumerate()
         .map(|(index, side)| {
             let page_number = index + 1;
-            if options.kindle {
-                format!(
-                    r#"<itemref idref="page{page_number}" linear="yes" properties="page-spread-{side}"/>"#
-                )
+            // EPUB defines bare left/right properties, but no bare center
+            // property. Preserve Kindle's older spelling only where valid.
+            let prefix = if options.kindle && *side != "center" {
+                ""
             } else {
-                format!(
-                    r#"<itemref idref="page{page_number}" properties="rendition:page-spread-{side}"/>"#
-                )
-            }
+                "rendition:"
+            };
+            let linear = if options.kindle { r#" linear="yes""# } else { "" };
+            format!(
+                r#"<itemref idref="page{page_number}"{linear} properties="{prefix}page-spread-{side}"/>"#
+            )
         })
         .collect();
 
@@ -1300,6 +1304,56 @@ mod tests {
         assert!(
             opf.contains(r#"<itemref idref="page1" linear="yes" properties="page-spread-right"/>"#)
         );
+    }
+
+    #[test]
+    fn centered_spine_items_use_the_reserved_rendition_property_for_every_family() {
+        for kindle in [false, true] {
+            for right_to_left in [false, true] {
+                for one_page_landscape in [false, true] {
+                    let mut chapters = sample_chapters();
+                    chapters[0].pages[1].role = PageRole::Rotated;
+                    let mut options = default_options();
+                    options.kindle = kindle;
+                    options.reading_direction.right_to_left = right_to_left;
+                    options.one_page_landscape = one_page_landscape;
+                    let opf = read_entry(
+                        build_epub(&chapters, &options).unwrap(),
+                        "OEBPS/content.opf",
+                    );
+                    let document = roxmltree::Document::parse(&opf).unwrap();
+                    let items: Vec<_> = document
+                        .descendants()
+                        .filter(|node| node.has_tag_name("itemref"))
+                        .collect();
+                    let sides = if one_page_landscape {
+                        ["center", "center", "center"]
+                    } else if right_to_left {
+                        ["left", "center", "right"]
+                    } else {
+                        ["right", "center", "left"]
+                    };
+                    assert_eq!(items.len(), sides.len());
+                    for (index, (item, side)) in items.iter().zip(sides).enumerate() {
+                        let prefix = if kindle && side != "center" {
+                            ""
+                        } else {
+                            "rendition:"
+                        };
+                        assert_eq!(
+                            item.attribute("properties"),
+                            Some(format!("{prefix}page-spread-{side}").as_str()),
+                            "kindle={kindle}, rtl={right_to_left}, one_page={one_page_landscape}"
+                        );
+                        assert_eq!(
+                            item.attribute("idref"),
+                            Some(format!("page{}", index + 1).as_str())
+                        );
+                        assert_eq!(item.attribute("linear"), kindle.then_some("yes"));
+                    }
+                }
+            }
+        }
     }
 
     #[test]

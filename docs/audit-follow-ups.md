@@ -94,3 +94,16 @@ After the audit PRs, review the comparison against KCC 12.0.0 before the next re
 
 This is the final planned block, not part of the dependency cleanup. Preserve accepted
 differences rather than changing output merely to make a comparison pass.
+
+## EPUB conformance follow-up before release
+
+Local EPUBCheck 5.4.0 validation of the retained synthetic books found an undefined
+`page-spread-center` property in both mangapress and KCC 12.0.0's Kindle output.
+The centered-property correction is prepared for review in
+[ADR 0018](adr/0018-standard-centered-spine-property.md), with exact-spelling and CLI
+regressions; page-side meaning remains compared with KCC.
+
+The next separate topics are pinned EPUBCheck integration, targeted complete-book coverage
+across device families and custom dimensions, then documentation/version preparation.
+EPUBCheck is not yet a CI gate. Reader appearance and parity are separate checks; neither
+a valid EPUB nor matching KCC proves the book's rendering on a physical device.

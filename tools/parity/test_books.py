@@ -115,6 +115,16 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(book["navigation"], {"ncx": (("Chapter", 0),), "nav": (("Chapter", 0),)})
         self.assertEqual(book["pages"], [image_bytes()])
 
+    def test_center_prefix_normalization_does_not_hide_a_different_side(self):
+        original = self.members["Book/content.opf"]
+        self.members["Book/content.opf"] = original.replace("page-spread-left", "page-spread-center")
+        kcc_center = self.read()
+        self.members["Book/content.opf"] = original.replace("page-spread-left", "rendition:page-spread-center")
+        books.compare_book(kcc_center, self.read())
+        self.members["Book/content.opf"] = original.replace("page-spread-left", "rendition:page-spread-right")
+        with self.assertRaisesRegex(ValueError, "sides"):
+            books.compare_book(kcc_center, self.read())
+
     def test_missing_image_or_navigation_resource_fails(self):
         for name in ("Book/Images/page.png", "Book/nav.xhtml"):
             with self.subTest(name=name):

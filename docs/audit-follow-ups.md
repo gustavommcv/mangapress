@@ -118,7 +118,9 @@ That expansion exposed two real output defects, handled separately:
 - [PR #25](https://github.com/gustavommcv/mangapress/pull/25): BMP is refused only for EPUB
   passthrough; normal conversion stays available, and CBZ retains correctly named BMP bytes.
 
-These pre-release PRs still require maintainer review and merge approval. The next topics are
-documentation/version preparation and a small reader smoke test before an explicitly approved
-tag. Reader appearance and parity are separate checks; neither
-a valid EPUB nor matching KCC proves the book's rendering on a physical device.
+These pre-release PRs still require maintainer review and merge approval. Documentation and
+the 0.7.3 package version are [prepared, not released](releases.md#073-preparation-not-released).
+A Linux KOReader smoke test is pending; its environment, actual rendering and navigation
+results must be recorded before an explicitly approved tag. Reader appearance and parity
+are separate checks; neither a valid EPUB nor matching KCC proves rendering on a physical
+device, and a desktop reader test does not establish that result either.

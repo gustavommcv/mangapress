@@ -14,13 +14,13 @@ Only the publication job has repository write permission. It downloads the `mang
 package artifacts, not the separate CI license reports, generates checksums, and requires
 the release tag to exist. Archive names and installer entry points are unchanged.
 
-## 0.7.3 preparation (not released)
+## 0.7.3 (2026-10-08)
 
-This patch candidate contains the October audit fixes and the EPUB follow-ups since 0.7.2.
+This patch release contains the October audit fixes and the EPUB follow-ups since 0.7.2.
 It adds no new CLI flags or output formats; the JSON protocol remains version 1.
 The audit and pre-release PRs are tracked in [audit follow-ups](audit-follow-ups.md).
 
-Draft release highlights:
+Release highlights:
 
 - Preserve existing outputs, validate portable output names, and stage completed writes.
   Unix output permissions follow ordinary file creation and the user's `umask`.
@@ -34,10 +34,13 @@ Draft release highlights:
 - Expand selected KCC comparisons and add a pinned EPUBCheck gate for 19 complete synthetic
   books, content assertions and failure controls. This is not exhaustive reader coverage.
 
-The package version is prepared, not published. README installer examples intentionally name
-the available 0.7.2 release. The reader smoke test below is complete for its stated candidate;
-verification of the final release commit's checks remains necessary before a separately approved tag.
-Do not update Mangabound's toolchain pin until verified release assets are available.
+[v0.7.3](https://github.com/gustavommcv/mangapress/releases/tag/v0.7.3) was published from
+commit `9ab67b858ba51221b6ac1f9074908bc61cb49289`. The tag workflow passed three-platform CI,
+extended KCC comparisons and complete-book EPUB conformance before publishing all four packages
+and `checksums.txt`. Downloads matched the published checksums and contained the executable
+and license notices. The downloaded Windows CLI reported version 0.7.3 and protocol version 1.
+The reader smoke test below covers its stated pre-release candidate.
+Mangabound's pinned toolchain is updated separately; this release does not change it.
 
 ### Reader smoke test
 
@@ -82,8 +85,8 @@ The test also found a Unix output-permission regression: staged files retained `
 the existing builder API, allowing the kernel to apply `umask` without changing it.
 The temporary and published file share these permissions. CLI regression tests cover
 EPUB, CBZ and PDF, explicit file and directory destinations, and ordinary/group-restricted/
-owner-only masks. Windows staging and book content are unchanged. Recheck the final
-commit's CI, parity and EPUB conformance before tagging.
+owner-only masks. Windows staging and book content are unchanged. The release gates reran
+CI, parity and EPUB conformance on the tagged commit before publication.
 
 ## Maintenance
 

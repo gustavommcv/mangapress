@@ -14,7 +14,10 @@ import zipfile
 
 from natsort import natsorted
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from book_fixtures import fixture
 
 from kcc_oracle import load_kcc
 from parity import COLOUR_LIMIT, GRAY_LIMIT, HERE, REFERENCE_KCC, REPO, Report, run
@@ -24,9 +27,6 @@ NS = {"opf": "http://www.idpf.org/2007/opf", "dc": "http://purl.org/dc/elements/
       "ocf": "urn:oasis:names:tc:opendocument:xmlns:container"}
 OPS = "{http://www.idpf.org/2007/ops}type"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
-COMIC_INFO = b'''<ComicInfo><Series>Synthetic Series</Series><Title>Episode</Title>
-<Volume>2</Volume><Number>7</Number><Writer>Zed, Ada</Writer>
-<Summary>Panels &amp; ramps.</Summary></ComicInfo>'''
 
 
 @dataclass(frozen=True)
@@ -69,25 +69,6 @@ EXTENDED_CASES = [
     Case("CBZ: Scribe default JPEG (90)", "cbz", "KS3", jpeg=True),
     Case("CBZ: Colorsoft default JPEG (90)", "cbz", "KCS", jpeg=True),
 ]
-
-
-def fixture(directory, *, jacket=False, colour=False, passthrough=False):
-    """Create chapter/page names whose natural and lexical orders disagree."""
-    files = []
-    for index, (chapter, page, shade) in enumerate(((10, 10, 160), (10, 2, 120), (2, 10, 80), (2, 2, 40))):
-        extension = ("png", "webp", "gif", "jpg")[index] if passthrough else "png"
-        path = directory / f"Chapter {chapter}" / f"page{page}.{extension}"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        width = 256 if jacket and chapter == page == 2 else 128
-        image = Image.new("RGB" if colour else "L", (width, 192), shade)
-        draw = ImageDraw.Draw(image)
-        draw.rectangle((9, 15, width // 2, 170), fill=(shade, 80, 220) if colour else 255)
-        for y in range(20, 160):
-            draw.line((width // 2 + 5, y, width - 8, y), fill=(y, 150, shade) if colour else y)
-        image.save(path)
-        files.append(path)
-    (directory / "ComicInfo.xml").write_bytes(COMIC_INFO)
-    return natsorted(files, key=lambda path: path.relative_to(directory).as_posix())
 
 
 def member(base, reference):

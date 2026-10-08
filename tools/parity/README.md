@@ -82,7 +82,8 @@ and ZIP serialization are not compared. Image tolerances are the same as the pag
 Page sides compare their meaning after normalizing the `rendition:` prefix: Kindle centered
 items use the standard prefixed property, not KCC's undefined bare spelling
 ([ADR 0018](../../docs/adr/0018-standard-centered-spine-property.md)). Exact spelling has Rust
-regression tests. This comparison does not replace EPUB conformance validation.
+regression tests. The independent [EPUBCheck gate](../epubcheck/README.md) validates selected
+complete mangapress EPUBs; this comparison does not replace conformance validation.
 Negative-control tests ensure missing/reordered pages, broken references, changed metadata,
 wrong codecs/quality, and altered passthrough bytes cannot produce a successful comparison.
 

@@ -33,6 +33,21 @@ not turn the Rust-only or excluded entries below into direct KCC comparisons.
 | Folder sorting, flat chapter navigation | Chapter/page 2 versus 10; actual NCX/nav targets and spine order | Unicode/case/roman-numeral sorting and repeated chapter-basename handling are not directly compared. Chapter-key collision handling is a documented difference. |
 | Transparent/indexed inputs and orientation boundaries | RGBA and palette alpha, odd sizes, square/near-square synthetic pages | Not all color profiles, alpha compositing conventions, bit depths, or malformed images. Rust tests cover supported codecs and input rejection. |
 
+## Undecided differences
+
+[differences.py](differences.py) runs both CLIs on cases that differ today and are in neither
+list of this document nor ADR 0013's table: the order of pages whose names continue one another
+or use full-width digits, pages lying beside chapter folders, chapter folders ordered by KCC's
+transliteration of their names, the contents entry for pages directly in the book, a `.cbz`
+with one top folder and the `ComicInfo.xml` inside it, damaged or unusual `ComicInfo.xml`
+files, AVIF, JPEG 2000 and BMP pages, a PNG cut short, a 16-bit gray PNG, the chroma layout of
+color JPEG output, default JPEG output of dense gray texture, the contents entry of a
+bookmark on a page that is cut in two, the cover of a webtoon book, and the gray levels and JPEG
+quality that a custom size gives an old Kindle or a Scribe. It fails until each is either
+followed or recorded as deliberate. One more is known and cannot be a stable case:
+KCC exempts from cropping the color first page of whichever chapter folder the operating
+system lists first, which changes from one disk to another; mangapress uses the book's first page.
+
 ## Mangapress-only behavior and excluded KCC features
 
 `--cover`, `--spreads` (explicit label-file selection), `--nested-toc`, `--dry-run`, `--quiet`,

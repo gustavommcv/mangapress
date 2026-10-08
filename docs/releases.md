@@ -34,8 +34,8 @@ Draft release highlights:
   books, content assertions and failure controls. This is not exhaustive reader coverage.
 
 The package version is prepared, not published. README installer examples intentionally name
-the available 0.7.2 release. Approval and merging of the stacked PRs, a reader smoke test, and
-verification of the final release commit's checks remain necessary before an approved tag.
+the available 0.7.2 release. A reader smoke test and verification of the final release commit's
+checks remain necessary before a separately approved tag.
 Do not update Mangabound's toolchain pin until verified release assets are available.
 
 ### Reader smoke test

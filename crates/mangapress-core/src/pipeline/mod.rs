@@ -84,6 +84,7 @@ pub struct PipelineOptions {
     pub no_quantize: bool,
     /// `--noprocessing`: leave every image exactly as it is.
     /// [`process_page`] hands the source bytes back untouched.
+    /// EPUB cannot embed BMP unchanged; that combination is refused.
     pub no_processing: bool,
     pub output_format: OutputFormat,
     /// `--forcepng`: quantize to the profile's grayscale palette (Floyd-
@@ -227,11 +228,23 @@ pub fn process_page(
 ) -> Result<Vec<ProcessedPage>> {
     if options.no_processing {
         crate::input::image_dimensions(source_bytes)?;
-        let extension = match image::guess_format(source_bytes) {
-            Ok(ImageFormat::Png) => "png",
-            Ok(ImageFormat::Gif) => "gif",
-            Ok(ImageFormat::WebP) => "webp",
-            _ => "jpg",
+        let extension = match image::guess_format(source_bytes)? {
+            ImageFormat::Jpeg => "jpg",
+            ImageFormat::Png => "png",
+            ImageFormat::Gif => "gif",
+            ImageFormat::WebP => "webp",
+            ImageFormat::Bmp if options.output_format == OutputFormat::Epub => {
+                return Err(crate::Error::Encode(
+                    "BMP pages cannot be embedded in EPUB without processing. Remove --noprocessing or choose CBZ output."
+                        .to_string(),
+                ));
+            }
+            ImageFormat::Bmp => "bmp",
+            format => {
+                return Err(crate::Error::Encode(format!(
+                    "unsupported passthrough image format: {format:?}"
+                )));
+            }
         };
         return Ok(vec![ProcessedPage {
             extension: extension.to_string(),
@@ -1119,6 +1132,36 @@ mod tests {
         assert_eq!(page.len(), 1);
         assert_eq!(page[0].extension, "png");
         assert_eq!(page[0].bytes, source);
+    }
+
+    #[test]
+    fn bmp_passthrough_keeps_its_codec_except_in_epub() {
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            32,
+            48,
+            image::Rgb([40, 80, 160]),
+        ))
+        .write_to(&mut encoded, ImageFormat::Bmp)
+        .unwrap();
+        let source = encoded.into_inner();
+        let mut options = options();
+        options.no_processing = true;
+        for format in [OutputFormat::Cbz, OutputFormat::Pdf] {
+            options.output_format = format;
+            let pages = process_page(&source, &options, true).unwrap();
+            assert_eq!(pages.len(), 1);
+            assert_eq!(pages[0].extension, "bmp");
+            assert_eq!(pages[0].bytes, source);
+        }
+        options.output_format = OutputFormat::Epub;
+        let error = process_page(&source, &options, true).unwrap_err();
+        assert!(matches!(error, crate::Error::Encode(_)));
+        assert!(error
+            .to_string()
+            .contains("Remove --noprocessing or choose CBZ"));
+        options.no_processing = false;
+        assert!(process_page(&source, &options, true).is_ok());
     }
 
     #[test]

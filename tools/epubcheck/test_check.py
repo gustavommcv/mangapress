@@ -27,6 +27,10 @@ class GateTests(unittest.TestCase):
         self.report = {"checker": {"path": str(self.book), "checkerVersion": check.VERSION,
                                    "nFatal": 0, "nError": 0, "nWarning": 0}, "messages": [],
                        "publication": {"nSpines": 1}}
+        # These tests isolate orchestration with fake CLI bytes. test_cases.py
+        # exercises the semantic assertions, and CI validates real CLI books.
+        self.enterContext(patch.object(check, "verify_events"))
+        self.enterContext(patch.object(check, "verify_book"))
 
     def write_report(self, report=None):
         self.path.write_text(json.dumps(self.report if report is None else report), encoding="utf-8")
@@ -144,7 +148,8 @@ class GateTests(unittest.TestCase):
         for produced in (False, True):
             def execute(command, **kwargs):
                 if produced and "--output" in command:
-                    Path(command[command.index("--output") + 1]).write_bytes(b"book")
+                    if "--dry-run" not in command:
+                        Path(command[command.index("--output") + 1]).write_bytes(b"book")
                     return subprocess.CompletedProcess(command, 0, "", "")
                 raise FileNotFoundError("executable is not installed")
             directory = self.directory / str(produced)
@@ -156,7 +161,8 @@ class GateTests(unittest.TestCase):
     def test_a_failed_case_is_not_masked_by_a_valid_book_and_negative_control(self):
         def convert(command, **kwargs):
             output = Path(command[command.index("--output") + 1])
-            output.write_bytes(b"book")
+            if "--dry-run" not in command:
+                output.write_bytes(b"book")
             return subprocess.CompletedProcess(command, 2 if output.parent.name == "failed" else 0, "", "")
         rejected = copy.deepcopy(self.report)
         rejected["checker"]["nError"] = 1
@@ -173,7 +179,8 @@ class GateTests(unittest.TestCase):
 
     def test_negative_control_requires_nonzero_exit_and_the_missing_resource_error(self):
         def convert(command, **kwargs):
-            Path(command[command.index("--output") + 1]).write_bytes(b"book")
+            if "--dry-run" not in command:
+                Path(command[command.index("--output") + 1]).write_bytes(b"book")
             return subprocess.CompletedProcess(command, 0, "", "")
         rejected = copy.deepcopy(self.report)
         rejected["checker"]["nError"] = 1
@@ -198,6 +205,40 @@ class GateTests(unittest.TestCase):
                     else:
                         with self.assertRaisesRegex(ValueError, "failed"):
                             check.run_suite(Path("cli"), Path("jar"), directory, "java", (check.Case("test"),))
+
+    def test_dry_run_writing_a_book_and_modified_inputs_fail(self):
+        for index, writes_book in enumerate((True, False)):
+            directory = self.directory / str(index)
+            directory.mkdir()
+
+            def convert(command, **kwargs):
+                if writes_book:
+                    Path(command[command.index("--output") + 1]).write_bytes(b"unexpected")
+                else:
+                    (Path(command[1]) / "ComicInfo.xml").write_bytes(b"changed")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with patch.object(check.subprocess, "run", side_effect=convert):
+                with self.subTest(writes_book=writes_book), self.assertRaisesRegex(ValueError, "failed"):
+                    check.run_suite(Path("cli"), Path("jar"), directory, "java", (check.Case("test"),))
+            summary = json.loads((directory / "summary.json").read_text(encoding="utf-8"))
+            self.assertIn("dry run" if writes_book else "changed an input", summary[0]["reason"])
+
+    def test_semantic_failures_are_not_masked_by_a_clean_checker_report(self):
+        def convert(command, **kwargs):
+            if "--dry-run" not in command:
+                Path(command[command.index("--output") + 1]).write_bytes(b"book")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        for index, helper in enumerate(("verify_events", "verify_book")):
+            directory = self.directory / str(index)
+            directory.mkdir()
+            with patch.object(check.subprocess, "run", side_effect=convert), \
+                 patch.object(check, helper, side_effect=ValueError("deliberately wrong content")), \
+                 patch.object(check, "check_book", return_value=(0, self.report)) as validate:
+                with self.subTest(helper=helper), self.assertRaisesRegex(ValueError, "failed"):
+                    check.run_suite(Path("cli"), Path("jar"), directory, "java", (check.Case("test"),))
+                validate.assert_not_called()
 
     def test_broken_copy_removes_only_a_page_image_and_preserves_zip_properties(self):
         members = {

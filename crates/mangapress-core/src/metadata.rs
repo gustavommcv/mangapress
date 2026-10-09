@@ -56,6 +56,22 @@ pub fn comic_info_text(bytes: &[u8]) -> String {
     }
 }
 
+/// `text` padded with zeros on the left to `width` characters, a sign kept in front of them
+/// (`-1` at width 3 is `-01`), as upstream's `zfill` does for the volume and the issue number.
+/// The text is padded, never parsed: a number written `2.5` or `1a` is left as it is.
+fn zero_fill(text: &str, width: usize) -> String {
+    let (sign, digits) = match text.chars().next() {
+        Some(sign @ ('+' | '-')) => (Some(sign), &text[1..]),
+        _ => (None, text),
+    };
+    let missing = width.saturating_sub(text.chars().count());
+    let mut filled = String::with_capacity(text.len() + missing);
+    filled.extend(sign);
+    filled.extend(std::iter::repeat_n('0', missing));
+    filled.push_str(digits);
+    filled
+}
+
 pub fn parse_comic_info_xml(xml: &str) -> crate::error::Result<ComicInfo> {
     let doc = roxmltree::Document::parse(xml)
         .map_err(|e| crate::error::Error::ComicInfo(e.to_string()))?;
@@ -185,10 +201,10 @@ pub fn resolve(
             }
             let mut suffix = String::new();
             if let Some(volume) = &info.volume {
-                suffix.push_str(&format!(" Vol. {volume:0>2}"));
+                suffix.push_str(&format!(" Vol. {}", zero_fill(volume, 2)));
             }
             if let Some(number) = &info.number {
-                suffix.push_str(&format!(" #{number:0>3}"));
+                suffix.push_str(&format!(" #{}", zero_fill(number, 3)));
             }
             if metadata_title_mode == MetadataTitleMode::Combine {
                 if let Some(t) = &info.title {
@@ -518,5 +534,38 @@ mod tests {
         let info = parse_comic_info_xml(&comic_info_text(&bytes)).unwrap();
 
         assert_eq!(info.series.as_deref(), Some("Sixteen"));
+    }
+
+    #[test]
+    fn zero_fill_pads_on_the_left_and_keeps_a_sign_in_front() {
+        assert_eq!(zero_fill("7", 3), "007");
+        assert_eq!(zero_fill("12", 2), "12");
+        assert_eq!(zero_fill("123", 2), "123");
+        assert_eq!(zero_fill("-1", 3), "-01");
+        assert_eq!(zero_fill("+1", 3), "+01");
+        assert_eq!(zero_fill("-1", 2), "-1");
+        assert_eq!(zero_fill("2.5", 4), "02.5");
+        assert_eq!(zero_fill("", 2), "00");
+        assert_eq!(zero_fill("-", 3), "-00");
+    }
+
+    #[test]
+    fn a_negative_issue_number_is_padded_after_its_sign() {
+        let info = ComicInfo {
+            series: Some("S".to_string()),
+            number: Some("-1".to_string()),
+            volume: Some("-2".to_string()),
+            ..ComicInfo::default()
+        };
+
+        let resolved = resolve(
+            Some(&info),
+            None,
+            None,
+            "fallback",
+            MetadataTitleMode::default(),
+        );
+
+        assert_eq!(resolved.title, "S Vol. -2 #-01");
     }
 }

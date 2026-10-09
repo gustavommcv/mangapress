@@ -64,8 +64,13 @@ python -m unittest discover -s tools/parity -p "test_*.py" -v
 Palette dithering, webtoon joining, and webtoon splitting have separate pixel-exact comparisons.
 The dither checks use 16-, 15-, and 4-level palettes.
 
-The pixel tolerance accounts for JPEG encoding and decoding differences. A passing comparison
-applies to the tested scenarios; it is not a guarantee for every image, option, or device.
+Both sides are compared before their JPEG step: KCC's driver stops short of its save, and the
+mangapress side is written as lossless PNG (`parity_dump --lossless`) unless the scenario is about
+PNG output. What is compared is the processing, not the codec; the codec has its own checks in the
+book comparisons below (quantization tables, chroma layout, scans, size, pixels). Most scenarios
+come out at a mean difference of 0.00 and none above 0.30; the tolerance is kept wide enough for
+the resampler and the dither, not for an encoder. A passing comparison applies to the tested
+scenarios; it is not a guarantee for every image, option, or device.
 
 Book comparisons run KCC's actual CLI entry point and the built mangapress executable on small
 chapter folders. They read each generated archive and compare:

@@ -168,6 +168,26 @@ fn rotate<P: image::Pixel + 'static>(img: &Buffer<P>, rotate_right: bool) -> Buf
     }
 }
 
+/// `--maximizestrips`: the page's two halves, the first-read one on top, on
+/// a canvas half as wide and twice as tall. When the width is odd the right
+/// half is one column wider than the canvas and loses that column, as it
+/// does upstream.
+pub(super) fn stack_halves(page: &image::RgbImage, manga_style: bool) -> image::RgbImage {
+    let (w, h) = page.dimensions();
+    let half = w / 2;
+    let left = image::imageops::crop_imm(page, 0, 0, half, h).to_image();
+    let right = image::imageops::crop_imm(page, half, 0, w - half, h).to_image();
+    let (first, second) = if manga_style {
+        (right, left)
+    } else {
+        (left, right)
+    };
+    let mut stacked = image::RgbImage::new(half.max(1), h * 2);
+    image::imageops::overlay(&mut stacked, &first, 0, 0);
+    image::imageops::overlay(&mut stacked, &second, 0, h as i64);
+    stacked
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

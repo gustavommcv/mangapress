@@ -109,8 +109,9 @@ are removed when each case ends. Repeat runs use fresh case folders, not stale b
 ## Open differences
 
 [differences.py](differences.py) holds small generated books on which the two tools still disagree
-and the difference is left open on purpose; [ADR 0019](../../docs/adr/0019-differences-from-kcc-found-by-the-october-comparison.md)
-says why, one by one, and lists the ones that are kept as deliberate:
+and that mangapress is to follow ([ADR 0020](../../docs/adr/0020-follow-kcc-on-the-differences-left-open.md)).
+[ADR 0019](../../docs/adr/0019-differences-from-kcc-found-by-the-october-comparison.md) lists, with its reasons,
+the differences that are kept as deliberate:
 
 ```sh
 python tools/parity/differences.py --kcc ../kcc-reference

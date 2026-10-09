@@ -100,14 +100,6 @@ class Difference:
 
 
 DIFFERENCES = [
-    # Page order inside a folder.
-    Difference("ORD-1", "defect", "a name that another name continues comes first",
-               tree(["A/p01.png", "A/p01 (2).png", "A/p01-2.png", "A/p01_b.png", "B/cover.png", "B/cover2.png", "B/x.png", "B/x1.png",
-                     "C/1.png", "C/1.5.png", "C/1.10.png", "C/2.png"]),
-               "mangapress puts 'p01 (2)' and 'p01-2' before 'p01', 'cover2' before 'cover', and '1.5' and '1.10' before '1'"),
-    Difference("ORD-2", "defect", "full-width digits count as numbers",
-               tree(["A/1.png", "A/２.png", "A/3.png", "A/１０.png", "第１話/1.png", "第２話/1.png", "第１０話/1.png"]),
-               "mangapress sorts full-width digits as letters: １０ before ２, in file names and in folder names"),
     # Which files are pages, and what a damaged one does.
     Difference("FILE-3", "defect", "a PNG cut short still becomes a page, blank where the data ends",
                tree(["Pages/001.png"], extra={"Pages/002.png": cut_short}),

@@ -242,6 +242,13 @@ KCC 12.0.0 is the image-processing reference. mangapress is an independent proje
 deliberate differences, and [ADR 0007](docs/adr/0007-gplv3-boundary-kcc-image-rs.md) explains the
 implementation and licensing boundary.
 
+## AI disclosure
+
+Parts of mangapress, including code, tests, and documentation, were written with the help of AI
+coding assistants. The maintainers direct, review, and test this work, but AI-assisted contributions
+can contain mistakes like any other. If you find a bug or an error in the documentation, please
+[open an issue](https://github.com/gustavommcv/mangapress/issues).
+
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.

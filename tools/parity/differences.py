@@ -63,10 +63,6 @@ def gray16(index):
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
 
 
-def cut_short(index):
-    return png(index)[:len(png(index)) * 6 // 10]
-
-
 def bookmarked_spread(directory):
     """Four source pages, the third a spread that is cut in two, each named in ComicInfo.xml's page list."""
     spread = Image.new("L", (800, 600), 255)
@@ -100,10 +96,6 @@ class Difference:
 
 
 DIFFERENCES = [
-    # Which files are pages, and what a damaged one does.
-    Difference("FILE-3", "defect", "a PNG cut short still becomes a page, blank where the data ends",
-               tree(["Pages/001.png"], extra={"Pages/002.png": cut_short}),
-               "mangapress stops with an error and writes no book"),
     # Compression of the pages.
     Difference("JPEG-1", "defect", "color JPEG pages and covers keep chroma at half size in both directions",
                corpus_pages(colour=True), "mangapress keeps chroma at full size: larger files, and pixels further from KCC's than the limit allows",

@@ -71,14 +71,225 @@ pub(crate) fn image_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
     Ok(decoder(bytes, MAX_IMAGE_PIXELS)?.dimensions())
 }
 
+/// A page as far as its file went.
+pub(crate) struct DecodedPage {
+    pub image: DynamicImage,
+    /// The file ended, or its data broke, before the whole image was read. What was not read
+    /// is blank, as Pillow leaves it when KCC asks it to load truncated images (`image.py`).
+    pub truncated: bool,
+}
+
 /// Decode through the image crate, preserving its default allocation checks
 /// as well as checking the pixel count before allocating the output buffer.
-pub(crate) fn decode_image(bytes: &[u8]) -> Result<DynamicImage> {
+fn decode_whole(bytes: &[u8]) -> Result<DynamicImage> {
     let mut decoder = decoder(bytes, MAX_IMAGE_PIXELS)?;
     let mut limits = Limits::default();
     limits.reserve(decoder.total_bytes())?;
     decoder.set_limits(limits)?;
     Ok(DynamicImage::from_decoder(decoder)?)
+}
+
+/// Decode a page. A PNG or GIF whose pixel data ends early is not refused, as KCC does not
+/// refuse it: the part that was read is kept and the rest is blank (black, or the first
+/// color of a palette, as Pillow's buffer starts out), and the result says so.
+pub(crate) fn decode_page(bytes: &[u8]) -> Result<DecodedPage> {
+    match decode_whole(bytes) {
+        Ok(image) => Ok(DecodedPage {
+            image,
+            truncated: false,
+        }),
+        Err(Error::Image(error)) if data_ended_early(&error) => match decode_partly(bytes) {
+            Some(image) => Ok(DecodedPage {
+                image,
+                truncated: true,
+            }),
+            None => Err(Error::Image(error)),
+        },
+        Err(error) => Err(error),
+    }
+}
+
+/// Decode a page, whole or as far as it goes (see [`decode_page`]).
+pub(crate) fn decode_image(bytes: &[u8]) -> Result<DynamicImage> {
+    Ok(decode_page(bytes)?.image)
+}
+
+/// A decoder met the end of the file, or data it could not read, after the header was read.
+/// Limits, unsupported formats and wrong parameters are not that.
+fn data_ended_early(error: &image::ImageError) -> bool {
+    match error {
+        image::ImageError::IoError(error) => error.kind() == std::io::ErrorKind::UnexpectedEof,
+        image::ImageError::Decoding(_) => true,
+        _ => false,
+    }
+}
+
+/// What a decoder had written when it stopped, handed back as a decoder so that the image
+/// crate turns it into an image the way it does for any other.
+struct Partial {
+    width: u32,
+    height: u32,
+    color: image::ColorType,
+    pixels: Vec<u8>,
+}
+
+impl ImageDecoder for Partial {
+    fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    fn color_type(&self) -> image::ColorType {
+        self.color
+    }
+
+    fn read_image(self, buf: &mut [u8]) -> image::ImageResult<()> {
+        buf.copy_from_slice(&self.pixels);
+        Ok(())
+    }
+
+    fn read_image_boxed(self: Box<Self>, buf: &mut [u8]) -> image::ImageResult<()> {
+        (*self).read_image(buf)
+    }
+}
+
+/// Decode again, keeping what the decoder wrote before it stopped. Only for the formats in
+/// which Pillow keeps what it read when a file ends early (PNG and GIF; JPEG decoders keep it
+/// by themselves). `None` for the others, when it stops for a reason that is not the end of
+/// the data, or when it does not stop.
+fn decode_partly(bytes: &[u8]) -> Option<DynamicImage> {
+    let mut decoder = decoder(bytes, MAX_IMAGE_PIXELS).ok()?;
+    let mut limits = Limits::default();
+    limits.reserve(decoder.total_bytes()).ok()?;
+    decoder.set_limits(limits).ok()?;
+    let (width, height) = decoder.dimensions();
+    let color = decoder.color_type();
+    // Pillow reads a WebP whole or not at all, and KCC does not ask for BMP pages.
+    let format = image::guess_format(bytes)
+        .ok()
+        .filter(|format| matches!(format, image::ImageFormat::Png | image::ImageFormat::Gif))?;
+    let png = format == image::ImageFormat::Png;
+
+    let mut pixels = vec![0u8; usize::try_from(decoder.total_bytes()).ok()?];
+    let unread = match format {
+        image::ImageFormat::Png => png_unread_pixel(bytes, color),
+        image::ImageFormat::Gif => gif_unread_pixel(bytes),
+        _ => None,
+    };
+    if let Some(unread) =
+        unread.filter(|unread| unread.len() == usize::from(color.bytes_per_pixel()))
+    {
+        for pixel in pixels.chunks_exact_mut(unread.len()) {
+            pixel.copy_from_slice(&unread);
+        }
+    }
+    match decoder.read_image(&mut pixels) {
+        Err(error) if data_ended_early(&error) => {}
+        _ => return None,
+    }
+    // The PNG decoder puts 16-bit samples in the machine's order only when it succeeds.
+    if png && color.bytes_per_pixel() / color.channel_count() == 2 {
+        pixels
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .for_each(|sample| *sample = u16::from_be_bytes(*sample).to_ne_bytes());
+    }
+    DynamicImage::from_decoder(Partial {
+        width,
+        height,
+        color,
+        pixels,
+    })
+    .ok()
+}
+
+/// The pixel a GIF has before its data is read, as the decoder writes it (RGBA): what Pillow's
+/// buffer holds before it is filled. That is the transparent index when the first image has one
+/// (a transparent pixel), and otherwise index 0 of its palette.
+fn gif_unread_pixel(bytes: &[u8]) -> Option<Vec<u8>> {
+    let table = |at: usize, packed: u8| -> Option<(&[u8], usize)> {
+        if packed & 0x80 == 0 {
+            return None;
+        }
+        let length = 3 * (2usize << (packed & 7));
+        Some((bytes.get(at..at + length)?, at + length))
+    };
+    let screen_packed = *bytes.get(10)?;
+    let (global, mut at) = match table(13, screen_packed) {
+        Some((colors, next)) => (Some(colors), next),
+        None => (None, 13),
+    };
+    let mut transparent = None;
+    loop {
+        match *bytes.get(at)? {
+            0x21 => {
+                if *bytes.get(at + 1)? == 0xF9 && *bytes.get(at + 2)? >= 4 {
+                    let flags = *bytes.get(at + 3)?;
+                    transparent = (flags & 1 == 1)
+                        .then(|| bytes.get(at + 6).copied())
+                        .flatten();
+                }
+                at += 2;
+                loop {
+                    let size = usize::from(*bytes.get(at)?);
+                    at += size + 1;
+                    if size == 0 {
+                        break;
+                    }
+                }
+            }
+            0x2C => {
+                let local = table(at + 10, *bytes.get(at + 9)?);
+                let colors = local.map(|(colors, _)| colors).or(global)?;
+                // Pillow starts the first frame as the transparent index when there is one.
+                let first = 3 * usize::from(transparent.unwrap_or(0));
+                let alpha = if transparent.is_some() { 0 } else { 255 };
+                return Some(vec![
+                    *colors.get(first)?,
+                    *colors.get(first + 1)?,
+                    *colors.get(first + 2)?,
+                    alpha,
+                ]);
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// The pixel a PNG has before its data is read, in the layout the decoder writes, when it is not
+/// all zeros: Pillow's buffer starts as index 0 of the palette, and a gray or RGB image with a
+/// transparent color starts opaque unless that color is black. Samples are big-endian, as the
+/// decoder leaves them.
+fn png_unread_pixel(bytes: &[u8], color: image::ColorType) -> Option<Vec<u8>> {
+    let reader = png::Decoder::new(Cursor::new(bytes)).read_info().ok()?;
+    let info = reader.info();
+    let bytes_per_sample = color.bytes_per_pixel() / color.channel_count();
+    let mut pixel = vec![0u8; usize::from(color.bytes_per_pixel())];
+    let alpha_at = pixel.len() - usize::from(bytes_per_sample);
+    match info.color_type {
+        png::ColorType::Indexed => {
+            let palette = info.palette.as_deref()?;
+            pixel[..3].copy_from_slice(palette.get(..3)?);
+            if color.has_alpha() {
+                pixel[alpha_at..].fill(
+                    info.trns
+                        .as_deref()
+                        .and_then(|t| t.first())
+                        .copied()
+                        .unwrap_or(255),
+                );
+            }
+        }
+        png::ColorType::Grayscale | png::ColorType::Rgb if color.has_alpha() => {
+            let transparent = info
+                .trns
+                .as_deref()
+                .is_some_and(|t| t.iter().all(|&b| b == 0));
+            pixel[alpha_at..].fill(if transparent { 0 } else { 255 });
+        }
+        _ => return None,
+    }
+    Some(pixel)
 }
 
 pub(crate) fn check_webtoon_dimensions(width: u32, height: u32) -> Result<()> {
@@ -252,5 +463,303 @@ mod tests {
             read_bounded(BrokenReader, Path::new("page.png"), 1, 8),
             Err(Error::Io(_))
         ));
+    }
+    // ---- Pages whose file ends early ----
+
+    fn encoded(image: &DynamicImage, format: image::ImageFormat) -> Vec<u8> {
+        let mut bytes = Cursor::new(Vec::new());
+        image.write_to(&mut bytes, format).unwrap();
+        bytes.into_inner()
+    }
+
+    /// Rows that differ from each other and do not compress away: row `y` is `y + 1` in every
+    /// sample, with noise that makes a cut in the data land in the middle of the image.
+    fn noisy_rows(width: u32, height: u32) -> image::RgbImage {
+        image::RgbImage::from_fn(width, height, |x, y| {
+            let noise = (x * 7 + y * 13 + x * y) as u8;
+            image::Rgb([noise, noise.wrapping_mul(3), (y + 1) as u8])
+        })
+    }
+
+    fn cut(bytes: &[u8], tenths: usize) -> &[u8] {
+        &bytes[..bytes.len() * tenths / 10]
+    }
+
+    #[test]
+    fn a_whole_page_is_not_truncated() {
+        let bytes = encoded(
+            &DynamicImage::ImageRgb8(noisy_rows(40, 60)),
+            image::ImageFormat::Png,
+        );
+        assert!(!decode_page(&bytes).unwrap().truncated);
+    }
+
+    #[test]
+    fn a_png_cut_short_keeps_the_rows_it_has_and_the_rest_is_black() {
+        let source = noisy_rows(60, 120);
+        let bytes = encoded(
+            &DynamicImage::ImageRgb8(source.clone()),
+            image::ImageFormat::Png,
+        );
+        let page = decode_page(cut(&bytes, 6)).unwrap();
+        assert!(page.truncated);
+        let page = page.image.to_rgb8();
+        assert_eq!(page.dimensions(), source.dimensions());
+
+        let kept = (0..source.height())
+            .take_while(|&y| {
+                (0..source.width()).all(|x| page.get_pixel(x, y) == source.get_pixel(x, y))
+            })
+            .count() as u32;
+        assert!(kept > 10 && kept < source.height(), "{kept} rows were kept");
+        for y in kept..source.height() {
+            assert!(
+                (0..source.width()).all(|x| page.get_pixel(x, y).0 == [0, 0, 0]),
+                "row {y} should be black"
+            );
+        }
+    }
+
+    #[test]
+    fn a_palette_png_cut_short_starts_from_its_first_color() {
+        let (width, height) = (60u32, 120u32);
+        let indices: Vec<u8> = (0..width * height)
+            .map(|n| 1 + ((u64::from(n) * 2_654_435_761) >> 7) as u8 % 7)
+            .collect();
+        let palette = [
+            200, 30, 30, 10, 20, 30, 40, 50, 60, 70, 80, 90, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 8, 7,
+        ];
+        for (transparency, expected) in [
+            (None, [200u8, 30, 30, 255]),
+            (Some(vec![0u8]), [200, 30, 30, 0]),
+            (Some(vec![255u8, 77]), [200, 30, 30, 255]),
+        ] {
+            let mut bytes = Vec::new();
+            let mut encoder = png::Encoder::new(&mut bytes, width, height);
+            encoder.set_color(png::ColorType::Indexed);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.set_palette(palette.to_vec());
+            if let Some(transparency) = &transparency {
+                encoder.set_trns(transparency.clone());
+            }
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&indices).unwrap();
+            writer.finish().unwrap();
+
+            let page = decode_page(cut(&bytes, 6)).unwrap();
+            assert!(page.truncated);
+            let page = page.image.to_rgba8();
+            let last = page.get_pixel(width - 1, height - 1).0;
+            if transparency.as_deref() == Some(&[0u8][..]) {
+                assert_eq!(last[3], 0, "{transparency:?}");
+            } else {
+                assert_eq!(last, expected, "{transparency:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_gray_png_with_a_transparent_black_starts_transparent_and_any_other_opaque() {
+        let (width, height) = (60u32, 120u32);
+        let pixels: Vec<u8> = (0..width * height)
+            .map(|n| 1 + ((u64::from(n) * 2_654_435_761) >> 7) as u8 % 200)
+            .collect();
+        for (transparent_gray, alpha) in [(0u8, 0u8), (255, 255)] {
+            let mut bytes = Vec::new();
+            let mut encoder = png::Encoder::new(&mut bytes, width, height);
+            encoder.set_color(png::ColorType::Grayscale);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.set_trns(vec![0, transparent_gray]);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&pixels).unwrap();
+            writer.finish().unwrap();
+
+            let page = decode_page(cut(&bytes, 6)).unwrap();
+            assert!(page.truncated);
+            let last = page
+                .image
+                .to_luma_alpha8()
+                .get_pixel(width - 1, height - 1)
+                .0;
+            assert_eq!(last, [0, alpha]);
+        }
+    }
+
+    #[test]
+    fn a_16_bit_png_cut_short_keeps_its_samples_in_the_machines_order() {
+        let source = image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::from_fn(60, 120, |x, y| {
+            image::Rgb([
+                (x * 977 + y * 31) as u16,
+                (y * 541 + x * x) as u16,
+                (1000 + y) as u16,
+            ])
+        });
+        let bytes = encoded(
+            &DynamicImage::ImageRgb16(source.clone()),
+            image::ImageFormat::Png,
+        );
+        let page = decode_page(cut(&bytes, 6)).unwrap();
+        assert!(page.truncated);
+        let page = page.image.to_rgb16();
+        assert_eq!(page.get_pixel(5, 0), source.get_pixel(5, 0));
+        assert_eq!(page.get_pixel(59, 3), source.get_pixel(59, 3));
+        assert_eq!(page.get_pixel(0, 119).0, [0, 0, 0]);
+    }
+
+    /// An interlaced (Adam7) 8-bit gray PNG written by hand, its data in stored deflate blocks:
+    /// the encoder in use does not write interlaced images.
+    fn interlaced_gray_png(width: u32, height: u32, sample: impl Fn(u32, u32) -> u8) -> Vec<u8> {
+        let mut data = Vec::new();
+        for (x0, y0, dx, dy) in [
+            (0, 0, 8, 8),
+            (4, 0, 8, 8),
+            (0, 4, 4, 8),
+            (2, 0, 4, 4),
+            (0, 2, 2, 4),
+            (1, 0, 2, 2),
+            (0, 1, 1, 2),
+        ] {
+            for y in (y0..height).step_by(dy) {
+                if x0 < width {
+                    data.push(0);
+                    data.extend((x0..width).step_by(dx).map(|x| sample(x, y)));
+                }
+            }
+        }
+        let (mut a, mut b) = (1u32, 0u32);
+        for &byte in &data {
+            a = (a + u32::from(byte)) % 65521;
+            b = (b + a) % 65521;
+        }
+        let mut zlib = vec![0x78, 0x01];
+        let blocks: Vec<&[u8]> = data.chunks(60000).collect();
+        for (n, block) in blocks.iter().enumerate() {
+            zlib.push(u8::from(n + 1 == blocks.len()));
+            zlib.extend((block.len() as u16).to_le_bytes());
+            zlib.extend((!(block.len() as u16)).to_le_bytes());
+            zlib.extend(*block);
+        }
+        zlib.extend(((b << 16) | a).to_be_bytes());
+
+        let crc32 = |bytes: &[u8]| {
+            let mut crc = u32::MAX;
+            for &byte in bytes {
+                crc ^= u32::from(byte);
+                for _ in 0..8 {
+                    crc = (crc >> 1) ^ (0xEDB8_8320 & 0u32.wrapping_sub(crc & 1));
+                }
+            }
+            !crc
+        };
+        let chunk = |kind: &[u8; 4], body: &[u8]| {
+            let mut out = (body.len() as u32).to_be_bytes().to_vec();
+            let mut checked = kind.to_vec();
+            checked.extend(body);
+            out.extend(&checked);
+            out.extend(crc32(&checked).to_be_bytes());
+            out
+        };
+        let mut header = width.to_be_bytes().to_vec();
+        header.extend(height.to_be_bytes());
+        header.extend([8, 0, 0, 0, 1]);
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend(chunk(b"IHDR", &header));
+        png.extend(chunk(b"IDAT", &zlib));
+        png.extend(chunk(b"IEND", b""));
+        png
+    }
+
+    #[test]
+    fn an_interlaced_png_cut_short_leaves_the_rows_of_the_passes_it_did_not_reach() {
+        let sample = |x: u32, y: u32| 1 + ((x * 5 + y * 3) % 250) as u8;
+        let bytes = interlaced_gray_png(24, 24, sample);
+        assert!(!decode_page(&bytes).unwrap().truncated);
+
+        let page = decode_page(cut(&bytes, 5)).unwrap();
+        assert!(page.truncated);
+        let page = page.image.to_luma8();
+        assert_eq!(
+            page.get_pixel(0, 0).0[0],
+            sample(0, 0),
+            "the first pass is read first"
+        );
+        assert_eq!(
+            page.get_pixel(23, 23).0[0],
+            0,
+            "the last pass was not reached"
+        );
+        let blank = page.pixels().filter(|p| p.0[0] == 0).count();
+        assert!(blank > 0 && blank < 24 * 24, "{blank} pixels are blank");
+    }
+
+    #[test]
+    fn what_a_gif_has_before_its_data_is_read() {
+        // Header, a screen with a 4-color table, then the first image.
+        let mut gif = b"GIF89a".to_vec();
+        gif.extend([4, 0, 4, 0, 0x81, 0, 0]);
+        gif.extend([10, 11, 12, 20, 21, 22, 30, 31, 32, 40, 41, 42]);
+        let image = [0x2C, 0, 0, 0, 0, 4, 0, 4, 0, 0];
+        let control = |transparent: u8| [0x21, 0xF9, 4, 1, 0, 0, transparent, 0];
+
+        let mut plain = gif.clone();
+        plain.extend(image);
+        assert_eq!(gif_unread_pixel(&plain), Some(vec![10, 11, 12, 255]));
+
+        let mut transparent_zero = gif.clone();
+        transparent_zero.extend(control(0));
+        transparent_zero.extend(image);
+        assert_eq!(
+            gif_unread_pixel(&transparent_zero),
+            Some(vec![10, 11, 12, 0])
+        );
+
+        let mut transparent_two = gif.clone();
+        transparent_two.extend(control(2));
+        transparent_two.extend(image);
+        assert_eq!(
+            gif_unread_pixel(&transparent_two),
+            Some(vec![30, 31, 32, 0])
+        );
+
+        // A table of the image's own wins over the screen's.
+        let mut local = gif.clone();
+        local.extend([0x2C, 0, 0, 0, 0, 4, 0, 4, 0, 0x80]);
+        local.extend([200, 201, 202, 1, 1, 1]);
+        assert_eq!(gif_unread_pixel(&local), Some(vec![200, 201, 202, 255]));
+
+        assert_eq!(gif_unread_pixel(&gif[..12]), None);
+    }
+
+    #[test]
+    fn a_webp_or_a_bmp_cut_short_is_still_refused() {
+        let source = DynamicImage::ImageRgb8(noisy_rows(60, 120));
+        for format in [image::ImageFormat::WebP, image::ImageFormat::Bmp] {
+            let bytes = encoded(&source, format);
+            assert!(
+                matches!(decode_page(cut(&bytes, 6)), Err(Error::Image(_))),
+                "{format:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_png_with_a_header_and_no_data_is_a_blank_page() {
+        let bytes = encoded(
+            &DynamicImage::ImageRgb8(noisy_rows(20, 30)),
+            image::ImageFormat::Png,
+        );
+        // Signature, IHDR (25 bytes) and the start of IDAT.
+        let page = decode_page(&bytes[..8 + 25 + 10]).unwrap();
+        assert!(page.truncated);
+        assert!(page.image.to_rgb8().pixels().all(|p| p.0 == [0, 0, 0]));
+    }
+
+    #[test]
+    fn a_header_that_is_not_complete_is_still_an_error() {
+        let bytes = encoded(
+            &DynamicImage::ImageRgb8(noisy_rows(20, 30)),
+            image::ImageFormat::Png,
+        );
+        assert!(decode_page(&bytes[..20]).is_err());
     }
 }

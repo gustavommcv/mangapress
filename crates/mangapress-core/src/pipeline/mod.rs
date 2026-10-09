@@ -236,6 +236,9 @@ pub struct ProcessedPage {
     /// instead of leaving it white.
     pub black_background: bool,
     pub role: spread::PageRole,
+    /// The source page's file ended, or its data broke, before the whole image was read, and
+    /// what was not read is blank (see [`crate::input`]): every piece of that page says so.
+    pub source_truncated: bool,
 }
 
 /// Processes a single source page, in upstream KCC 12.0.0's order:
@@ -298,10 +301,14 @@ pub fn process_page(
             bytes: source_bytes.to_vec(),
             black_background: false,
             role: spread::PageRole::Normal,
+            source_truncated: false,
         }]);
     }
 
-    let decoded = crate::input::decode_image(source_bytes)?;
+    let crate::input::DecodedPage {
+        image: decoded,
+        truncated,
+    } = crate::input::decode_page(source_bytes)?;
     // Upstream answers "not color" for a single-channel source without
     // measuring it.
     let single_channel = !decoded.color().has_color();
@@ -365,9 +372,9 @@ pub fn process_page(
 
     let mut outputs = Vec::with_capacity(pieces.len());
     for (variant, role) in pieces {
-        outputs.push(finish_page(
-            variant, role, target, options, background, is_color,
-        )?);
+        let mut output = finish_page(variant, role, target, options, background, is_color)?;
+        output.source_truncated = truncated;
+        outputs.push(output);
     }
     Ok(outputs)
 }
@@ -487,6 +494,7 @@ fn finish_page(
         bytes,
         black_background: fill_is_black(options, background),
         role,
+        source_truncated: false,
     })
 }
 
@@ -627,6 +635,7 @@ fn finish_color_page(
         bytes,
         black_background: fill_is_black(options, background),
         role,
+        source_truncated: false,
     })
 }
 

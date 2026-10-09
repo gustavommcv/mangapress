@@ -41,19 +41,10 @@ from epub_book import read_epub
 from books import compare_book
 from kcc_oracle import load_kcc
 import make_corpus
+from trees import INFO, MARK_BASE, MARK_STEP, comic_info, encode, marked_page, png, stored, tree, write_source
 from parity import HERE, REFERENCE_KCC, REPO, matches, run
 
 FULL_TONE = ("--forcepng", "--noquantize")
-MARK_BASE, MARK_STEP = 40, 12
-
-
-def marked_page(index):
-    """A framed page with a flat patch whose level says which page it is, whatever order it ends up in."""
-    image = Image.new("L", (400, 600), 255)
-    draw = ImageDraw.Draw(image)
-    draw.rectangle((40, 40, 359, 559), outline=0, width=6)
-    draw.rectangle((80, 100, 319, 499), fill=MARK_BASE + MARK_STEP * index)
-    return image
 
 
 def mark_of(data):
@@ -61,16 +52,6 @@ def mark_of(data):
         histogram = image.convert("L").histogram()
     peak = max(range(20, 236), key=lambda level: sum(histogram[level - 2:level + 3]))
     return round((peak - MARK_BASE) / MARK_STEP)
-
-
-def encode(image, fmt, **options):
-    data = io.BytesIO()
-    image.save(data, fmt, **options)
-    return data.getvalue()
-
-
-def png(index):
-    return encode(marked_page(index), "PNG")
 
 
 def gray16(index):
@@ -84,30 +65,6 @@ def gray16(index):
 
 def cut_short(index):
     return png(index)[:len(png(index)) * 6 // 10]
-
-
-def comic_info(body):
-    return f"<ComicInfo>{body}</ComicInfo>"
-
-
-INFO = comic_info("<Series>Synthetic Series</Series><Volume>2</Volume><Writer>Zed, Ada</Writer><Summary>Sum.</Summary>")
-
-
-def tree(names, extra=None, info=INFO):
-    """A book: one marked page per relative path (numbered as listed), other files, and ComicInfo.xml."""
-    def build(directory):
-        files = {name: png(index) for index, name in enumerate(names)}
-        files.update({name: maker(len(names) + offset) if callable(maker) else maker
-                      for offset, (name, maker) in enumerate((extra or {}).items())})
-        if info is not None:
-            files["ComicInfo.xml"] = info if isinstance(info, bytes) else info.encode()
-        legend = list(names) + list(extra or {})
-        return files, legend
-    return build
-
-
-def stored(fmt, **options):
-    return lambda index: encode(marked_page(index), fmt, **options)
 
 
 def corpus_pages(colour):
@@ -228,20 +185,6 @@ DIFFERENCES = [
                corpus_pages(colour=False), "mangapress keeps quality 90, for pages and for the cover",
                kcc=("-c", "0") + CUSTOM, ours=("--cropping", "disabled") + CUSTOM, profile="KS3"),
 ]
-
-
-def write_source(directory, files, archive):
-    if archive:
-        path = directory / "Synthetic Book.cbz"
-        with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as output:
-            for name, data in files.items():
-                output.writestr(name, data)
-        return path
-    path = directory / "Synthetic Book"
-    for name, data in files.items():
-        (path / name).parent.mkdir(parents=True, exist_ok=True)
-        (path / name).write_bytes(data)
-    return path
 
 
 def attempt(command):

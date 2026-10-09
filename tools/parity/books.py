@@ -74,6 +74,8 @@ CASES = [
     # The book Mangabound hands over: no ComicInfo.xml, the author given on the command line.
     Case("EPUB: a Mangabind volume as a .cbz", kcc=FULL_TONE + AUTHOR, ours=FULL_TONE + AUTHOR,
          tree=book_tree(MANGABIND_VOLUME, info=None), archive=True),
+    Case("EPUB: pages lying directly in the book are listed under its title", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(["001.png", "002.png", "003.png"])),
     Case("EPUB: a Mangabind series of two volumes as a .cbz", kcc=FULL_TONE + AUTHOR, ours=FULL_TONE + AUTHOR,
          tree=book_tree(MANGABIND_SERIES, info=None), archive=True),
 ]

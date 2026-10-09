@@ -566,7 +566,7 @@ fn build_ncx(
                         let chapter_order = play_order(href);
                         format!(
                             r#"<navPoint id="chapter{id}" playOrder="{chapter_order}"><navLabel><text>{title}</text></navLabel><content src="{href}"/></navPoint>"#,
-                            title = xml_escape(&chapter.title),
+                            title = xml_escape(toc_label(chapter, &options.title)),
                         )
                     })
                     .collect::<Vec<_>>()
@@ -590,7 +590,7 @@ fn build_ncx(
                 let chapter_order = play_order(href);
                 format!(
                     r#"<navPoint id="chapter{id}" playOrder="{chapter_order}"><navLabel><text>{title}</text></navLabel><content src="{href}"/></navPoint>"#,
-                    title = xml_escape(&chapter.title),
+                    title = xml_escape(toc_label(chapter, &options.title)),
                 )
             })
             .collect::<Vec<_>>()
@@ -635,7 +635,7 @@ fn build_nav(
                     .map(|(chapter, href)| {
                         format!(
                             r#"<li><a href="{href}">{title}</a></li>"#,
-                            title = xml_escape(&chapter.title),
+                            title = xml_escape(toc_label(chapter, &options.title)),
                         )
                     })
                     .collect::<Vec<_>>()
@@ -657,7 +657,7 @@ fn build_nav(
             .map(|(chapter, href)| {
                 format!(
                     r#"<li><a href="{href}">{title}</a></li>"#,
-                    title = xml_escape(&chapter.title),
+                    title = xml_escape(toc_label(chapter, &options.title)),
                 )
             })
             .collect::<Vec<_>>()
@@ -694,12 +694,23 @@ fn build_nav(
             .map(|(chapter, href)| {
                 format!(
                     r#"<li><a href="{href}">{title}</a></li>"#,
-                    title = xml_escape(&chapter.title),
+                    title = xml_escape(toc_label(chapter, &options.title)),
                 )
             })
             .collect::<Vec<_>>()
             .join("\n"),
     )
+}
+
+/// What the table of contents calls a chapter. Pages lying directly in the book have no
+/// folder to name them, so the book's own title stands in, as upstream does; a bookmark has
+/// no pages and keeps the name it was given.
+fn toc_label<'a>(chapter: &'a Chapter, book_title: &'a str) -> &'a str {
+    if chapter.relative_path.as_os_str().is_empty() && !chapter.pages.is_empty() {
+        book_title
+    } else {
+        &chapter.title
+    }
 }
 
 /// One volume's worth of already-flat chapters, grouped for `nested_toc`
@@ -1030,6 +1041,92 @@ mod tests {
             .unwrap();
         assert!(nav.contains("c001 - Title One"));
         assert!(nav.contains("c002 - Nyako&apos;s Whereabouts"));
+    }
+
+    fn loose_page() -> Page {
+        Page {
+            extension: "png".to_string(),
+            bytes: tiny_png(),
+            ..Default::default()
+        }
+    }
+
+    fn chapter_in(folder: &str, title: &str) -> Chapter {
+        Chapter {
+            relative_path: PathBuf::from(folder),
+            title: title.to_string(),
+            pages: vec![loose_page()],
+        }
+    }
+
+    fn navigation_of(bytes: Vec<u8>) -> (String, String) {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut read = |name: &str| {
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut archive.by_name(name).unwrap(), &mut text).unwrap();
+            text
+        };
+        (read("OEBPS/toc.ncx"), read("OEBPS/nav.xhtml"))
+    }
+
+    #[test]
+    fn pages_lying_directly_in_the_book_are_listed_under_the_books_title() {
+        // `group_into_chapters` calls the folderless group "Untitled"; the contents say the title.
+        let chapters = vec![chapter_in("", "Untitled")];
+
+        let (ncx, nav) = navigation_of(build_epub(&chapters, &default_options()).unwrap());
+
+        assert_eq!(ncx.matches("<navPoint").count(), 1);
+        assert!(ncx.contains("<navLabel><text>Test Book</text></navLabel>"));
+        assert!(nav.contains(">Test Book</a></li>"));
+        assert!(!ncx.contains("Untitled") && !nav.contains("Untitled"));
+    }
+
+    #[test]
+    fn a_folder_beside_loose_pages_keeps_its_own_name() {
+        let chapters = vec![
+            chapter_in("", "Untitled"),
+            chapter_in("c001 - One", "c001 - One"),
+        ];
+
+        let (ncx, nav) = navigation_of(build_epub(&chapters, &default_options()).unwrap());
+
+        let book = ncx
+            .find("<navLabel><text>Test Book</text></navLabel>")
+            .unwrap();
+        let folder = ncx
+            .find("<navLabel><text>c001 - One</text></navLabel>")
+            .unwrap();
+        assert!(book < folder);
+        assert!(nav.contains(">c001 - One</a></li>"));
+    }
+
+    #[test]
+    fn a_bookmark_keeps_the_name_it_was_given() {
+        let chapters = vec![chapter_in("", "Untitled")];
+        let mut options = default_options();
+        options.bookmarks = vec![(0, "The start".to_string())];
+
+        let (ncx, nav) = navigation_of(build_epub(&chapters, &options).unwrap());
+
+        assert!(ncx.contains("<navLabel><text>The start</text></navLabel>"));
+        assert!(nav.contains(">The start</a></li>"));
+        assert!(!ncx.contains("<navLabel><text>Test Book</text></navLabel>"));
+    }
+
+    #[test]
+    fn the_identifier_keeps_being_made_from_the_groups_own_title() {
+        // Only the label written into the contents changes; a book keeps the identifier it had.
+        let chapters = vec![chapter_in("", "Untitled")];
+        let bytes = build_epub(&chapters, &default_options()).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut opf = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("OEBPS/content.opf").unwrap(), &mut opf)
+            .unwrap();
+
+        let expected = synthetic_identifier("Test Book\u{0}Test Author\u{0}Untitled");
+
+        assert!(opf.contains(&expected), "{opf}");
     }
 
     #[test]

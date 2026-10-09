@@ -118,7 +118,7 @@ DIFFERENCES = [
     Difference("ORD-2", "defect", "full-width digits count as numbers",
                tree(["A/1.png", "A/２.png", "A/3.png", "A/１０.png", "第１話/1.png", "第２話/1.png", "第１０話/1.png"]),
                "mangapress sorts full-width digits as letters: １０ before ２, in file names and in folder names"),
-    # ORD-3 also meets TOC-1: its loose pages are an entry of their own.
+    # ORD-3 also meets the entry for loose pages, which is labelled with the book's title.
     Difference("ORD-3", "defect", "a folder's own pages come before its subfolders",
                tree(["cover.png", "zz-credits.png", "Chapter 1/001.png", "Chapter 1/002.png", "Chapter 2/001.png"]),
                "mangapress puts pages lying beside the chapter folders after the chapters whose names sort first; the cover changes with it"),
@@ -129,9 +129,6 @@ DIFFERENCES = [
                tree(["Émile/1.png", "Eric/1.png", "Frank/1.png", "漫画/1.png", "一/1.png", "_notes/1.png", "[bonus]/1.png", "#extra/1.png"]),
                "KCC orders by a transliteration of each name (Émile as emile, 漫画 as man-hua, [bonus] as bonus); mangapress by the names as written"),
     # Table of contents.
-    Difference("TOC-1", "defect", "pages directly in the book are listed under the book's title",
-               tree(["001.png", "002.png", "003.png"]),
-               "mangapress labels that entry 'Untitled'"),
     Difference("TOC-2", "defect", "a .cbz whose pages sit in one top folder is read as if that folder were not there",
                tree(WRAPPED), "mangapress lists the folder's name where KCC lists the book's title", archive=True),
     # ComicInfo.xml.

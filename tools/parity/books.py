@@ -15,11 +15,12 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from book_fixtures import fixture
+from book_fixtures import COMIC_INFO, fixture
 from epub_book import member, read_epub
 
+import book_inputs
 from kcc_oracle import load_kcc
-from parity import COLOUR_LIMIT, GRAY_LIMIT, HERE, REFERENCE_KCC, REPO, Report, run
+from parity import COLOUR_LIMIT, GRAY_LIMIT, HERE, REFERENCE_KCC, REPO, Report, matches, run
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 
@@ -35,7 +36,15 @@ class Case:
     jacket: bool = False
     colour: bool = False
     jpeg: bool = False
+    # A book from book_inputs.BOOKS instead of the small chapter fixture.
+    pages: str = ""
+    # Leave each tool's own cropping on; the small fixture's flat pages have nothing to crop.
+    crop: bool = False
 
+
+# Lossless pages, so that what is compared is what each tool read and did, not how it compressed the result.
+FULL_TONE = ("--noquantize",)
+COLOUR_KEPT = FULL_TONE + ("--forcecolor", "--force-png-rgb", "--nokepub")
 
 CASES = [
     Case("EPUB: metadata, natural order, cover and navigation"),
@@ -50,6 +59,9 @@ CASES = [
     Case("CBZ: legacy grayscale PNG", "cbz", "KoLC", ("--pnglegacy",), ("--pnglegacy",)),
     Case("CBZ: full-tone PNG", "cbz", "KoLC", ("--noquantize",), ("--noquantize",)),
     Case("CBZ: profile default JPEG (85)", "cbz", "K11", jpeg=True),
+    Case("EPUB: stored forms of a page, full-tone gray", kcc=FULL_TONE, ours=FULL_TONE, pages="decoded inputs"),
+    Case("EPUB: page shapes, cropped as by default", kcc=FULL_TONE, ours=FULL_TONE, pages="geometry", crop=True),
+    Case("EPUB: gray-or-colour decision, gray output", kcc=FULL_TONE, ours=FULL_TONE, pages="colour decision"),
 ]
 EXTENDED_CASES = [
     Case("EPUB: combined ComicInfo title", kcc=("--metadatatitle", "1"), ours=("--metadatatitle", "combine")),
@@ -63,6 +75,11 @@ EXTENDED_CASES = [
          ("--forcecolor", "--force-png-rgb"), colour=True),
     Case("CBZ: Scribe default JPEG (90)", "cbz", "KS3", jpeg=True),
     Case("CBZ: Colorsoft default JPEG (90)", "cbz", "KCS", jpeg=True),
+    Case("EPUB: stored forms of a page, colour kept", profile="KoC", kcc=COLOUR_KEPT, ours=COLOUR_KEPT, pages="decoded inputs"),
+    Case("EPUB: page shapes, enlarged, right to left, spreads cut and turned", kcc=FULL_TONE + ("-u", "-m", "-r", "2"),
+         ours=FULL_TONE + ("-u", "-m", "--splitter", "both"), pages="geometry", crop=True),
+    Case("EPUB: gray-or-colour decision, colour asked for", profile="KoC", kcc=COLOUR_KEPT, ours=COLOUR_KEPT,
+         pages="colour decision"),
 ]
 
 
@@ -123,6 +140,7 @@ def main():
     parser.add_argument("--kcc", required=True)
     parser.add_argument("--work", type=Path, default=Path(REPO) / "target/parity/books")
     parser.add_argument("--extended", action="store_true", help="include pre-release interactions and JPEG qualities")
+    parser.add_argument("--only", action="append", help="run cases whose names contain this text; repeat to select more")
     args = parser.parse_args()
     checkout = str(Path(args.kcc).resolve())
     version, _, _, _ = load_kcc(checkout)
@@ -138,25 +156,34 @@ def main():
     for quality in qualities:
         cases.append(Case(f"CBZ: JPEG quality {quality}", "cbz", "KoLC",
                           ("--jpeg-quality", str(quality)), ("--jpeg-quality", str(quality)), jpeg=True))
+    if args.only:
+        cases = [case for case in cases if matches(case.name, args.only)]
+        if not cases:
+            parser.error("no cases match --only")
     report = Report()
     for index, case in enumerate(cases):
         # Retain books for diagnosis, but use a fresh folder so stale files
         # cannot stand in for a missing CLI output on a repeat run.
         directory = Path(tempfile.mkdtemp(prefix=f"{index:02d}-", dir=args.work))
         source = directory / "Synthetic Book"
-        originals = fixture(source, jacket=case.jacket, colour=case.colour,
-                            passthrough=case.passthrough)
+        if case.pages:
+            originals = book_inputs.write(source, book_inputs.BOOKS[case.pages]())
+            (source / "ComicInfo.xml").write_bytes(COMIC_INFO)
+        else:
+            originals = fixture(source, jacket=case.jacket, colour=case.colour,
+                                passthrough=case.passthrough)
         source_bytes = {path: path.read_bytes() for path in originals + [source / "ComicInfo.xml"]}
         kcc_dir = directory / "kcc"
         kcc_dir.mkdir()
         output = kcc_dir / f"result.{case.format}"
         ours = directory / f"mangapress.{case.format}"
         png_flags = [] if case.jpeg else ["--forcepng"]
+        kcc_crop, our_crop = ([], []) if case.crop else (["-c", "0"], ["--cropping", "disabled"])
         with tempfile.TemporaryDirectory(dir=kcc_dir) as temporary:
             run(oracle + [str(kcc_dir), "--book", temporary, str(source), "-o", str(output),
-                          "-f", case.format.upper(), "-p", case.profile, "-c", "0"] + png_flags + list(case.kcc))
+                          "-f", case.format.upper(), "-p", case.profile] + kcc_crop + png_flags + list(case.kcc))
         run([binary, str(source), "-o", str(ours), "-f", case.format, "-p", case.profile,
-             "--cropping", "disabled", "--quiet"] + png_flags + list(case.ours))
+             "--quiet"] + our_crop + png_flags + list(case.ours))
         try:
             if any(path.read_bytes() != data for path, data in source_bytes.items()):
                 raise ValueError("a CLI modified its source files")

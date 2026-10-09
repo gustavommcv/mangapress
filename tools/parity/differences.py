@@ -1,10 +1,10 @@
-"""Differences from KCC 12.0.0 that nobody has decided yet.
+"""Differences from KCC 12.0.0 that are left open on purpose.
 
 Each case here is a small generated book on which the two real command-line
-tools disagree today. None of them is in ADR 0013's table of deliberate
-differences. A case stops failing when mangapress is changed to do what KCC
-does, or leaves this file when the difference is accepted and written into
-that table. Until then this script exits with an error, on purpose:
+tools disagree today, and where mangapress has not been changed to follow KCC
+(ADR 0019 says why, one by one). A case leaves this file when mangapress is
+changed to do what KCC does (it then belongs in books.py). Until then this
+script exits with an error, on purpose:
 
     python tools/parity/differences.py --kcc ../kcc-reference [--only TEXT]
 
@@ -118,43 +118,18 @@ DIFFERENCES = [
     Difference("ORD-2", "defect", "full-width digits count as numbers",
                tree(["A/1.png", "A/２.png", "A/3.png", "A/１０.png", "第１話/1.png", "第２話/1.png", "第１０話/1.png"]),
                "mangapress sorts full-width digits as letters: １０ before ２, in file names and in folder names"),
-    Difference("ORD-5", "quirk", "chapter folders are ordered by their names written in plain ASCII",
-               tree(["Émile/1.png", "Eric/1.png", "Frank/1.png", "漫画/1.png", "一/1.png", "_notes/1.png", "[bonus]/1.png", "#extra/1.png"]),
-               "KCC orders by a transliteration of each name (Émile as emile, 漫画 as man-hua, [bonus] as bonus); mangapress by the names as written"),
     # Table of contents.
-    Difference("META-4", "quirk", "one empty element makes KCC drop the whole ComicInfo.xml",
-               tree(CHAPTERS, info=comic_info("<Series>S</Series><Volume>3</Volume><Writer>Ann</Writer><Summary></Summary>")),
-               "KCC falls back to the folder name and its own name as author; mangapress uses the other fields"),
-    Difference("META-5", "quirk", "text is taken as written: surrounding white space kept, entities decoded twice",
-               tree(CHAPTERS, info=comic_info("<Series>\n  Tom &amp;amp; Jerry\n</Series><Writer> Ann ,  Bo</Writer>")),
-               "KCC keeps the line breaks and spaces and gives 'Tom & Jerry'; mangapress trims and gives 'Tom &amp; Jerry'"),
     Difference("META-6", "defect", "a negative issue number is padded after its sign",
                tree(CHAPTERS, info=comic_info("<Series>S</Series><Number>-1</Number><Writer>Ann</Writer>")),
                "KCC writes '#-01', mangapress '#0-1'"),
-    Difference("TOC-3", "quirk", "a bookmark on a page that is cut in two points at its last piece",
-               bookmarked_spread, "KCC's entry opens the second half (or, with the turned copy kept, that copy); mangapress's opens the first half"),
-    Difference("TOC-4", "quirk", "a webtoon book declares no cover",
-               strips, "mangapress declares one", kcc=("-w", "--forcepng"), ours=("-w", "--forcepng")),
     # Which files are pages, and what a damaged one does.
-    Difference("FILE-1", "defect", "AVIF and JPEG 2000 files are pages",
-               tree(["Pages/001.png", "Pages/004.png"], extra={"Pages/002.avif": stored("AVIF", quality=90), "Pages/003.jp2": stored("JPEG2000")}),
-               "mangapress leaves them out with a warning that counts them; a book of only such pages is refused"),
-    Difference("FILE-2", "chosen", "BMP files are not pages",
-               tree(["Pages/001.png", "Pages/003.png"], extra={"Pages/002.bmp": stored("BMP")}),
-               "mangapress includes them (the coverage map says so; ADR 0013's table does not)"),
     Difference("FILE-3", "defect", "a PNG cut short still becomes a page, blank where the data ends",
                tree(["Pages/001.png"], extra={"Pages/002.png": cut_short}),
                "mangapress stops with an error and writes no book"),
-    Difference("FILE-4", "quirk", "a 16-bit gray PNG comes out almost white",
-               tree(["Pages/001.png"], extra={"Pages/002.png": gray16}),
-               "KCC keeps only the lowest 255 of 65535 levels; mangapress scales the levels and shows the page"),
     # Compression of the pages.
     Difference("JPEG-1", "defect", "color JPEG pages and covers keep chroma at half size in both directions",
                corpus_pages(colour=True), "mangapress keeps chroma at full size: larger files, and pixels further from KCC's than the limit allows",
                kcc=("-c", "0", "--forcecolor"), ours=("--cropping", "disabled", "--forcecolor")),
-    Difference("JPEG-2", "noise", "default JPEG pages of textured gray art",
-               corpus_pages(colour=False), "the lossless pages are identical; at quality 85 the two encoders round differently, by more than the limit on dense texture",
-               kcc=(), ours=()),
     # Device settings that a custom size changes.
     Difference("CUST-1", "defect", "with a custom size an old Kindle gets sixteen gray levels",
                corpus_pages(colour=False), "mangapress keeps the device's own four (Kindle 1) or fifteen (Kindle 2) levels",

@@ -34,20 +34,17 @@ not turn the Rust-only or excluded entries below into direct KCC comparisons.
 | Layout Mangabound writes (volume folder, chapter folders, `p0001` pages), as a `.cbz` | One volume and a series of two volumes, compared page by page with the navigation and title | Mangabound hands over only this layout; the author is given on the command line, as it does. A case in `books.py` can now be a tree of files, written as a folder or a `.cbz` (`trees.py`). |
 | Transparent/indexed inputs and orientation boundaries | RGBA and palette alpha, odd sizes, square/near-square synthetic pages; a book of stored forms (color profiles, four-channel JPEG, 16-bit color PNG, palettes, low bit depths, transparency of every PNG kind, JPEG chroma layouts, GIF, WebP, orientation tags) as gray and as color output; a book of page shapes from one pixel to long strips, with default cropping | 16-bit gray PNG, files cut short, AVIF and JPEG 2000 pages are not in these books: the tools differ there. Rust tests cover supported codecs and input rejection. |
 
-## Undecided differences
+## Differences left open
 
-[differences.py](differences.py) runs both CLIs on cases that differ today and are in neither
-list of this document nor ADR 0013's table: the order of pages whose names continue one another
-or use full-width digits, pages lying beside chapter folders, chapter folders ordered by KCC's
-transliteration of their names, the contents entry for pages directly in the book, a `.cbz`
-with one top folder and the `ComicInfo.xml` inside it, damaged or unusual `ComicInfo.xml`
-files, AVIF, JPEG 2000 and BMP pages, a PNG cut short, a 16-bit gray PNG, the chroma layout of
-color JPEG output, default JPEG output of dense gray texture, the contents entry of a
-bookmark on a page that is cut in two, the cover of a webtoon book, and the gray levels and JPEG
-quality that a custom size gives an old Kindle or a Scribe. It fails until each is either
-followed or recorded as deliberate. One more is known and cannot be a stable case:
-KCC exempts from cropping the color first page of whichever chapter folder the operating
-system lists first, which changes from one disk to another; mangapress uses the book's first page.
+[differences.py](differences.py) runs both CLIs on cases that differ today and that
+[ADR 0019](../../docs/adr/0019-differences-from-kcc-found-by-the-october-comparison.md) leaves open:
+the order of pages whose names continue one another or use full-width digits, a PNG cut short, the
+chroma layout of color JPEG output, the sign of a negative issue number, and the gray levels and
+JPEG quality that a custom size gives an old Kindle or a Scribe. It fails until each is followed.
+The differences that are kept on purpose are in the same ADR. The order of pages beside chapter
+folders, the contents entry for pages directly in a book, a `.cbz` with one top folder and
+the `ComicInfo.xml` inside it, and a `ComicInfo.xml` that is damaged or in UTF-16 were followed and
+are now direct comparisons in `books.py`.
 
 ## Mangapress-only behavior and excluded KCC features
 

@@ -18,13 +18,12 @@ class OpenDifferenceTests(unittest.TestCase):
             self.assertEqual(differences.mark_of(differences.png(index)), index)
             self.assertEqual(differences.mark_of(jpeg), index)
 
-    def test_every_book_names_an_author_unless_the_case_is_about_its_absence(self):
+    def test_every_book_names_an_author(self):
         for case in differences.DIFFERENCES:
             files, _ = case.build(None)
             metadata = [data for name, data in files.items() if name.endswith("ComicInfo.xml")]
             self.assertEqual(len(metadata), 1, case.id)
-            if case.id not in ("META-2", "META-3"):
-                self.assertIn(b"<Writer>", metadata[0], case.id)
+            self.assertIn(b"<Writer>", metadata[0], case.id)
 
     def test_a_reordered_book_is_reported_as_order_and_an_unreadable_mark_is_not(self):
         pages = [differences.png(0), differences.png(1)]

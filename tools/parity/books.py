@@ -21,6 +21,7 @@ from epub_book import member, read_epub
 import book_inputs
 from kcc_oracle import load_kcc
 from parity import COLOUR_LIMIT, GRAY_LIMIT, HERE, REFERENCE_KCC, REPO, Report, matches, run
+from trees import tree as book_tree, write_source
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 
@@ -40,11 +41,19 @@ class Case:
     pages: str = ""
     # Leave each tool's own cropping on; the small fixture's flat pages have nothing to crop.
     crop: bool = False
+    # A book laid out exactly as given: a callable like trees.tree(...), written as a folder or, with `archive`, as a .cbz.
+    tree: object = None
+    archive: bool = False
 
 
 # Lossless pages, so that what is compared is what each tool read and did, not how it compressed the result.
 FULL_TONE = ("--noquantize",)
 COLOUR_KEPT = FULL_TONE + ("--forcecolor", "--force-png-rgb", "--nokepub")
+
+# What Mangabind writes into the .cbz of a volume: one folder for the volume, one for each chapter, pages numbered p0001.
+MANGABIND_VOLUME = ["v001 - Vol.01/c001 - One/p0001.png", "v001 - Vol.01/c001 - One/p0002.png", "v001 - Vol.01/c002 - Two/p0001.png"]
+MANGABIND_SERIES = MANGABIND_VOLUME + ["v002 - Vol.02/c003 - Three/p0001.png"]
+AUTHOR = ("-a", "Ada")
 
 CASES = [
     Case("EPUB: metadata, natural order, cover and navigation"),
@@ -62,6 +71,11 @@ CASES = [
     Case("EPUB: stored forms of a page, full-tone gray", kcc=FULL_TONE, ours=FULL_TONE, pages="decoded inputs"),
     Case("EPUB: page shapes, cropped as by default", kcc=FULL_TONE, ours=FULL_TONE, pages="geometry", crop=True),
     Case("EPUB: gray-or-colour decision, gray output", kcc=FULL_TONE, ours=FULL_TONE, pages="colour decision"),
+    # The book Mangabound hands over: no ComicInfo.xml, the author given on the command line.
+    Case("EPUB: a Mangabind volume as a .cbz", kcc=FULL_TONE + AUTHOR, ours=FULL_TONE + AUTHOR,
+         tree=book_tree(MANGABIND_VOLUME, info=None), archive=True),
+    Case("EPUB: a Mangabind series of two volumes as a .cbz", kcc=FULL_TONE + AUTHOR, ours=FULL_TONE + AUTHOR,
+         tree=book_tree(MANGABIND_SERIES, info=None), archive=True),
 ]
 EXTENDED_CASES = [
     Case("EPUB: combined ComicInfo title", kcc=("--metadatatitle", "1"), ours=("--metadatatitle", "combine")),
@@ -166,13 +180,20 @@ def main():
         # cannot stand in for a missing CLI output on a repeat run.
         directory = Path(tempfile.mkdtemp(prefix=f"{index:02d}-", dir=args.work))
         source = directory / "Synthetic Book"
-        if case.pages:
-            originals = book_inputs.write(source, book_inputs.BOOKS[case.pages]())
-            (source / "ComicInfo.xml").write_bytes(COMIC_INFO)
+        if case.tree:
+            files, _ = case.tree(directory)
+            source = write_source(directory, files, case.archive)
+            originals = []
+            source_bytes = {path: path.read_bytes() for path in ([source] if source.is_file() else sorted(source.rglob("*")))
+                            if path.is_file()}
         else:
-            originals = fixture(source, jacket=case.jacket, colour=case.colour,
-                                passthrough=case.passthrough)
-        source_bytes = {path: path.read_bytes() for path in originals + [source / "ComicInfo.xml"]}
+            if case.pages:
+                originals = book_inputs.write(source, book_inputs.BOOKS[case.pages]())
+                (source / "ComicInfo.xml").write_bytes(COMIC_INFO)
+            else:
+                originals = fixture(source, jacket=case.jacket, colour=case.colour,
+                                    passthrough=case.passthrough)
+            source_bytes = {path: path.read_bytes() for path in originals + [source / "ComicInfo.xml"]}
         kcc_dir = directory / "kcc"
         kcc_dir.mkdir()
         output = kcc_dir / f"result.{case.format}"

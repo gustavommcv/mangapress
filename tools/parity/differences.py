@@ -129,12 +129,6 @@ DIFFERENCES = [
                tree(["Émile/1.png", "Eric/1.png", "Frank/1.png", "漫画/1.png", "一/1.png", "_notes/1.png", "[bonus]/1.png", "#extra/1.png"]),
                "KCC orders by a transliteration of each name (Émile as emile, 漫画 as man-hua, [bonus] as bonus); mangapress by the names as written"),
     # Table of contents.
-    Difference("TOC-2", "defect", "a .cbz whose pages sit in one top folder is read as if that folder were not there",
-               tree(WRAPPED), "mangapress lists the folder's name where KCC lists the book's title", archive=True),
-    # ComicInfo.xml.
-    Difference("META-1", "defect", "ComicInfo.xml inside the single top folder of a .cbz is used",
-               tree(WRAPPED, extra={"My Wrapper/ComicInfo.xml": INFO.encode()}, info=None),
-               "mangapress ignores it: the title, authors and summary are missing", archive=True),
     Difference("META-4", "quirk", "one empty element makes KCC drop the whole ComicInfo.xml",
                tree(CHAPTERS, info=comic_info("<Series>S</Series><Volume>3</Volume><Writer>Ann</Writer><Summary></Summary>")),
                "KCC falls back to the folder name and its own name as author; mangapress uses the other fields"),

@@ -8,6 +8,7 @@
 
 pub mod cbz;
 pub mod folder;
+mod top_folder;
 
 /// One extracted source page, in tree order, with its path relative to the
 /// archive/folder root — the relative path is what chapter attribution
@@ -59,7 +60,13 @@ pub fn read_book(path: &std::path::Path) -> crate::Result<BookInput> {
     if path.is_dir() {
         folder::read_selected(path, keep)
     } else {
-        cbz::extract_selected(std::fs::File::open(path)?, keep)
+        // A `ComicInfo.xml` inside the one folder of a zipped folder is read too, and settled
+        // afterwards (see `top_folder`).
+        let mut input = cbz::extract_selected(std::fs::File::open(path)?, |entry| {
+            keep(entry) || top_folder::is_folder_comic_info(entry)
+        })?;
+        top_folder::settle(&mut input);
+        Ok(input)
     }
 }
 

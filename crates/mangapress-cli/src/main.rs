@@ -1179,7 +1179,13 @@ fn run<W: std::io::Write + Send>(
     let mut page_count = 0usize;
     let mut source_pages_done = 0usize;
     for (chapter_index, chapter) in source_chapters.into_iter().enumerate() {
-        let chapter_title = chapter.title.clone();
+        // Pages lying directly in the book have no folder to name them: the book's title does,
+        // as it does in the contents.
+        let chapter_title = if chapter.relative_path.as_os_str().is_empty() {
+            title.clone()
+        } else {
+            chapter.title.clone()
+        };
         let chapter_source_len = chapter.pages.len();
         events
             .emit(

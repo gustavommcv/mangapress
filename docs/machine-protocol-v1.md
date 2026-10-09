@@ -33,7 +33,7 @@ The stream contains these event types:
 | Type | Purpose |
 |---|---|
 | `stage` | `started`/`completed` transition for `inspect`, `metadata`, `plan`, `process`, `package`, or `write` |
-| `chapter` | `started`/`completed` transition with chapter title/index and source/output page counts |
+| `chapter` | `started`/`completed` transition with chapter title/index and source/output page counts. Pages lying directly in the book (not in a folder) are one chapter, titled with the book's title |
 | `page` | Completion of one source page with chapter, one-based page, global completed count, and total |
 | `warning` | Recoverable issue with stable code, stage, message, and context |
 | `error` | Fatal issue with stable code, stage, context, message, and diagnostic detail |

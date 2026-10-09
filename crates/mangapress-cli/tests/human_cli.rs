@@ -135,6 +135,11 @@ fn page_errors_name_the_real_second_image_in_folders_and_archives() {
                 "c001 - One/scan-20.png".to_owned(),
                 std::fs::read(broken).unwrap(),
             ),
+            // A second chapter, as in the folder: one folder alone would be read as the book itself.
+            (
+                "c002 - Two/p0001.png".to_owned(),
+                std::fs::read(folder.path().join("c002 - Two/p0001.png")).unwrap(),
+            ),
         ],
         true,
     )

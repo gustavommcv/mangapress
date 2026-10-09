@@ -21,7 +21,7 @@ from epub_book import member, read_epub
 import book_inputs
 from kcc_oracle import load_kcc
 from parity import COLOUR_LIMIT, GRAY_LIMIT, HERE, REFERENCE_KCC, REPO, Report, matches, run
-from trees import tree as book_tree, write_source
+from trees import INFO, tree as book_tree, write_source
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 
@@ -54,6 +54,7 @@ COLOUR_KEPT = FULL_TONE + ("--forcecolor", "--force-png-rgb", "--nokepub")
 MANGABIND_VOLUME = ["v001 - Vol.01/c001 - One/p0001.png", "v001 - Vol.01/c001 - One/p0002.png", "v001 - Vol.01/c002 - Two/p0001.png"]
 MANGABIND_SERIES = MANGABIND_VOLUME + ["v002 - Vol.02/c003 - Three/p0001.png"]
 AUTHOR = ("-a", "Ada")
+WRAPPED = ["My Wrapper/001.png", "My Wrapper/002.png"]
 CHAPTERS = ["Ch 1/001.png", "Ch 1/002.png", "Ch 2/001.png"]
 
 CASES = [
@@ -83,6 +84,11 @@ CASES = [
     Case("EPUB: a ComicInfo.xml in UTF-16 is read", kcc=FULL_TONE, ours=FULL_TONE,
          tree=book_tree(CHAPTERS, info=('<?xml version="1.0" encoding="utf-16"?>'
                                         "<ComicInfo><Series>Sixteen</Series><Writer>Ann</Writer></ComicInfo>").encode("utf-16"))),
+    # A .cbz made by zipping a folder: its pages lie in the book, and a ComicInfo.xml inside the folder is the book's.
+    Case("EPUB: a .cbz whose pages sit in one top folder", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(WRAPPED), archive=True),
+    Case("EPUB: a ComicInfo.xml inside the single top folder of a .cbz", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(WRAPPED, extra={"My Wrapper/ComicInfo.xml": INFO.encode()}, info=None), archive=True),
     Case("EPUB: a Mangabind series of two volumes as a .cbz", kcc=FULL_TONE + AUTHOR, ours=FULL_TONE + AUTHOR,
          tree=book_tree(MANGABIND_SERIES, info=None), archive=True),
 ]

@@ -105,6 +105,18 @@ CASES = [
          tree=corpus_pages(colour=False)),
     Case("EPUB: a custom size takes a Scribe back to JPEG quality 85, cover included", profile="KS3", kcc=CUSTOM, ours=CUSTOM,
          jpeg=True, tree=corpus_pages(colour=False)),
+    # Names are put in order as KCC does: the stem before the extension, and digits of any script as numbers.
+    Case("EPUB: a name that another name continues comes first", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(["A/p01.png", "A/p01 (2).png", "A/p01-2.png", "A/p01_b.png", "B/cover.png", "B/cover2.png", "B/x.png", "B/x1.png",
+                         "C/1.png", "C/1.5.png", "C/1.10.png", "C/2.png"])),
+    Case("EPUB: digits of other scripts count as numbers", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(["A/1.png", "A/２.png", "A/3.png", "A/１０.png",
+                         "第１話/1.png", "第２話/1.png", "第１０話/1.png"])),
+    Case("EPUB: the same order inside a .cbz", kcc=FULL_TONE, ours=FULL_TONE, archive=True,
+         tree=book_tree(["A/p01.png", "A/p01 (2).png", "A/p01-2.png", "C/1.png", "C/1.5.png", "C/1.10.png", "C/2.png", "D/２.png",
+                         "D/１０.png", "D/3.png"])),
+    Case("EPUB: extensions that differ in case or length", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(["a.PNG", "a2.png", "B.png", "b.jpg", "b.gif", "c.5.png", "c.50.png", "c.6.png", "A10.png"])),
 ]
 EXTENDED_CASES = [
     Case("EPUB: combined ComicInfo title", kcc=("--metadatatitle", "1"), ours=("--metadatatitle", "combine")),

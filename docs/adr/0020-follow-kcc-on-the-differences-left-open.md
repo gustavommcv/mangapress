@@ -32,9 +32,12 @@ How each is followed, where the way was a decision:
   sign, as a number is written. A custom size is a size given as a non-zero width or height: it
   makes the device an ordinary one in two respects, sixteen gray levels, and the default JPEG
   quality of an ordinary device. A quality given on the command line wins, as before.
-- **FILE-3.** A damaged image is read as far as it goes and the rest of the page is blank, as
-  KCC does. What ADR 0019 gave as the reason to stop, that stopping names the damaged file, is
-  kept by saying so: the run reports the file in a warning, and the book is made.
+- **FILE-3.** A PNG or GIF whose data ends early is read as far as it goes, and the rest of the page
+  is what Pillow's buffer holds before it is filled, as KCC leaves it: black, the first color of a
+  palette, or the transparent color of a GIF. (JPEG decoders keep what they read by themselves; a
+  WebP is refused, as KCC refuses it; a BMP is not a KCC page.) What ADR 0019 gave as the reason to
+  stop, that stopping names the damaged file, is kept by saying so: a `page_truncated` warning names
+  the chapter, the page and the file, and the book is made.
 - **ORD-1, ORD-2.** A name is split from its extensions and compared without them first, and
   digits of every script count as numbers, which is what KCC's sorting library does. Its order
   also depends on the platform and the locale; mangapress takes the one answer that does not

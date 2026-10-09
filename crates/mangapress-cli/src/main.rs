@@ -12,8 +12,8 @@ use mangapress_core::ebook::{
 use mangapress_core::manga::ReadingDirection;
 use mangapress_core::metadata::{self, MetadataTitleMode};
 use mangapress_core::pipeline::{
-    default_jpeg_quality, process_page, CroppingMode, OutputFormat, PipelineOptions, ProcessedPage,
-    SplitterMode,
+    effective_default_jpeg_quality, effective_palette, process_page, CroppingMode, OutputFormat,
+    PipelineOptions, ProcessedPage, SplitterMode,
 };
 use mangapress_core::profile::{Family, Profile};
 use protocol::{event_write_failure, EventSink, RunFailure};
@@ -552,7 +552,7 @@ fn run<W: std::io::Write + Send>(
             "mangapress: converting '{}' for {} ({width}x{height}, {} gray levels), manga_style={}, format={:?}",
             input.display(),
             profile.display_name,
-            profile.palette.levels(),
+            effective_palette(profile, cli.customwidth, cli.customheight).levels(),
             cli.manga_style,
             cli.format,
         );
@@ -1007,7 +1007,7 @@ fn run<W: std::io::Write + Send>(
                 "device": profile.display_name,
                 "width": width,
                 "height": height,
-                "gray_levels": profile.palette.levels(),
+                "gray_levels": effective_palette(profile, cli.customwidth, cli.customheight).levels(),
                 "chapters": total_chapters,
                 "pages": total_pages,
             }),
@@ -1337,9 +1337,9 @@ fn run<W: std::io::Write + Send>(
                     smart_crop: cli.smartcovercrop,
                     fill: cli.coverfill,
                     force_color: cli.forcecolor,
-                    jpeg_quality: cli
-                        .jpeg_quality
-                        .unwrap_or_else(|| default_jpeg_quality(profile)),
+                    jpeg_quality: cli.jpeg_quality.unwrap_or_else(|| {
+                        effective_default_jpeg_quality(profile, cli.customwidth, cli.customheight)
+                    }),
                 },
             ) {
                 Ok(cover) => Some(cover),

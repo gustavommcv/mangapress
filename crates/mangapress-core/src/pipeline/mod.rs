@@ -116,7 +116,54 @@ pub fn default_jpeg_quality(profile: &crate::profile::Profile) -> u8 {
     }
 }
 
+/// Whether either dimension is overridden. Upstream then swaps the device for a profile of its
+/// own, "Custom", which keeps only the device's other settings: it has sixteen gray levels
+/// whatever the device had, and, being no Scribe or Colorsoft, the default JPEG quality of an
+/// ordinary device.
+pub fn is_custom_size(width_override: Option<u32>, height_override: Option<u32>) -> bool {
+    width_override.unwrap_or(0) != 0 || height_override.unwrap_or(0) != 0
+}
+
+/// The gray levels of the pages: the device's own, or sixteen with a custom size.
+pub fn effective_palette(
+    profile: &crate::profile::Profile,
+    width_override: Option<u32>,
+    height_override: Option<u32>,
+) -> crate::profile::Palette {
+    if is_custom_size(width_override, height_override) {
+        crate::profile::Palette::Gray16
+    } else {
+        profile.palette
+    }
+}
+
+/// [`default_jpeg_quality`], except that a custom size makes the device an ordinary one.
+pub fn effective_default_jpeg_quality(
+    profile: &crate::profile::Profile,
+    width_override: Option<u32>,
+    height_override: Option<u32>,
+) -> u8 {
+    if is_custom_size(width_override, height_override) {
+        85
+    } else {
+        default_jpeg_quality(profile)
+    }
+}
+
 impl PipelineOptions {
+    /// The gray levels of the pages (see [`effective_palette`]).
+    pub fn palette(&self) -> crate::profile::Palette {
+        effective_palette(self.profile, self.width_override, self.height_override)
+    }
+
+    /// The JPEG quality of the pages: the one asked for, or the default (see
+    /// [`effective_default_jpeg_quality`]).
+    pub fn jpeg_quality(&self) -> u8 {
+        self.jpeg_quality.unwrap_or_else(|| {
+            effective_default_jpeg_quality(self.profile, self.width_override, self.height_override)
+        })
+    }
+
     /// The format-specific target, or the custom resolution when supplied.
     pub fn target_resolution(&self) -> (u32, u32) {
         self.output_format.target_resolution(
@@ -403,7 +450,7 @@ fn finish_page(
 
     let mut bytes = Vec::new();
     let extension = if options.force_png {
-        let palette = options.profile.palette;
+        let palette = options.palette();
         match quantized_container(options) {
             Container::IndexedPng => {
                 let indices = crate::quantize::quantize_to_palette_indices(&page, palette);
@@ -426,9 +473,7 @@ fn finish_page(
         // encodes at the `image` crate's own default quality of 75,
         // regardless of device profile -- noticeably more compressed than
         // KCC's own 85/90 default for every page this pipeline produces.
-        let quality = options
-            .jpeg_quality
-            .unwrap_or_else(|| default_jpeg_quality(options.profile));
+        let quality = options.jpeg_quality();
         JpegEncoder::new_with_quality(&mut std::io::Cursor::new(&mut bytes), quality).write_image(
             page.as_raw(),
             page.width(),
@@ -568,9 +613,7 @@ fn finish_color_page(
             .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Png)?;
         "png"
     } else {
-        let quality = options
-            .jpeg_quality
-            .unwrap_or_else(|| default_jpeg_quality(options.profile));
+        let quality = options.jpeg_quality();
         JpegEncoder::new_with_quality(&mut std::io::Cursor::new(&mut bytes), quality).write_image(
             page.as_raw(),
             page.width(),
@@ -649,6 +692,72 @@ mod tests {
             default_jpeg_quality(crate::profile::Profile::by_code("KV").unwrap()),
             85
         );
+    }
+
+    #[test]
+    fn a_custom_size_gives_sixteen_gray_levels_whatever_the_device_had() {
+        use crate::profile::{Palette, Profile};
+        let k1 = Profile::by_code("K1").unwrap();
+        let k2 = Profile::by_code("K2").unwrap();
+        assert_eq!(effective_palette(k1, None, None), Palette::Gray4);
+        assert_eq!(effective_palette(k2, None, None), Palette::Gray15);
+        for (width, height) in [
+            (Some(800), None),
+            (None, Some(1200)),
+            (Some(800), Some(1200)),
+        ] {
+            assert_eq!(effective_palette(k1, width, height), Palette::Gray16);
+            assert_eq!(effective_palette(k2, width, height), Palette::Gray16);
+        }
+        // Zero is "not overridden", as it is for the resolution.
+        assert_eq!(effective_palette(k1, Some(0), Some(0)), Palette::Gray4);
+    }
+
+    #[test]
+    fn a_custom_size_makes_scribe_and_colorsoft_ordinary_devices_for_the_jpeg_quality() {
+        use crate::profile::Profile;
+        for code in ["KS", "KS3", "KCS", "KSCS"] {
+            let profile = Profile::by_code(code).unwrap();
+            assert_eq!(
+                effective_default_jpeg_quality(profile, None, None),
+                90,
+                "{code}"
+            );
+            assert_eq!(
+                effective_default_jpeg_quality(profile, Some(1000), None),
+                85,
+                "{code}"
+            );
+            assert_eq!(
+                effective_default_jpeg_quality(profile, None, Some(1000)),
+                85,
+                "{code}"
+            );
+            assert_eq!(
+                effective_default_jpeg_quality(profile, Some(0), Some(0)),
+                90,
+                "{code}"
+            );
+        }
+        let kv = Profile::by_code("KV").unwrap();
+        assert_eq!(
+            effective_default_jpeg_quality(kv, Some(1000), Some(1000)),
+            85
+        );
+    }
+
+    #[test]
+    fn the_quality_asked_for_wins_over_every_default() {
+        let mut options = options();
+        options.profile = crate::profile::Profile::by_code("KS3").unwrap();
+        options.jpeg_quality = Some(60);
+        assert_eq!(options.jpeg_quality(), 60);
+        options.width_override = Some(1000);
+        assert_eq!(options.jpeg_quality(), 60);
+        options.jpeg_quality = None;
+        assert_eq!(options.jpeg_quality(), 85);
+        options.width_override = None;
+        assert_eq!(options.jpeg_quality(), 90);
     }
 
     fn options() -> PipelineOptions {

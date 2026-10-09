@@ -6,12 +6,22 @@ use std::cmp::Ordering;
 
 const VECTORS: &str = include_str!("natural_sort_vectors.txt");
 
+/// The groups of the file. A checkout that turns line feeds into carriage returns and line feeds
+/// (Windows, with the default git settings) does not change them: `lines()` takes both off, and a
+/// group begins after a line that is only dashes.
 fn groups() -> Vec<Vec<&'static str>> {
-    VECTORS
-        .split("---\n")
-        .skip(1)
-        .map(|group| group.lines().filter(|line| !line.is_empty()).collect())
-        .collect()
+    let mut groups = Vec::new();
+    for line in VECTORS.lines() {
+        if line == "---" {
+            groups.push(Vec::new());
+        } else if !line.is_empty() && !line.starts_with("## ") {
+            groups
+                .last_mut()
+                .expect("the first group begins after the header")
+                .push(line);
+        }
+    }
+    groups
 }
 
 #[test]

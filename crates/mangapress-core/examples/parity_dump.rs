@@ -1,6 +1,7 @@
 //! The mangapress half of the parity check in `tools/parity/`: runs this
 //! crate's real page pipeline over a list of images and writes every page
-//! it produces as PNG, plus a `mangapress.json` describing them, so that
+//! it produces, as the pipeline wrote it (or as lossless PNG with `--lossless`), plus a
+//! `mangapress.json` describing them, so that
 //! `tools/parity/parity.py` can set them beside what upstream KCC does with
 //! the same images. Not part of the product; see `tools/parity/README.md`.
 //!
@@ -33,6 +34,10 @@ fn main() {
     let number = |name: &str| value(name).map(|v| v.parse::<f32>().expect("a number"));
 
     let webtoon = flag("--webtoon");
+    // The pages as lossless PNG whatever the scenario asks for, so that what is compared with KCC's
+    // pixels (which the oracle takes before its JPEG save) is the processing and not the codec.
+    // Only the last step changes: nothing before the encoder looks at these three settings.
+    let lossless = flag("--lossless");
     let options = PipelineOptions {
         profile: Profile::by_code(profile).expect("a known profile code"),
         width_override: value("--customwidth").map(|v| v.parse().expect("--customwidth=<number>")),
@@ -70,22 +75,20 @@ fn main() {
         color_autocontrast: flag("--colorautocontrast"),
         webtoon,
         force_color: flag("--forcecolor"),
-        force_png_rgb: flag("--force-png-rgb"),
+        force_png_rgb: flag("--force-png-rgb") || lossless,
         png_legacy: flag("--pnglegacy"),
-        no_quantize: flag("--noquantize"),
+        no_quantize: flag("--noquantize") || lossless,
         no_processing: false,
         output_format: match value("--format") {
             Some("cbz") => OutputFormat::Cbz,
             Some("pdf") => OutputFormat::Pdf,
             _ => OutputFormat::Epub,
         },
-        force_png: flag("--forcepng"),
+        force_png: flag("--forcepng") || lossless,
         gamma: value("--gamma").map(|g| g.parse().expect("--gamma=<number>")),
         autolevel: flag("--autolevel"),
         noautocontrast: flag("--noautocontrast"),
         erase_rainbow: flag("--eraserainbow"),
-        // As close to the pipeline's own pixels as a JPEG gets, so that what
-        // is compared is the processing and not the codec.
         jpeg_quality: Some(100),
     };
     std::fs::create_dir_all(out_dir).expect("creating the output directory");
@@ -139,14 +142,13 @@ fn main() {
         let outputs = pipeline::process_page(&bytes, &options, n == 0).unwrap();
         let mut pieces = Vec::new();
         for (i, page) in outputs.iter().enumerate() {
+            // The page as the pipeline wrote it, so that the comparison decodes it with the
+            // same decoder as KCC's file (Pillow). Decoding it here with the `image` crate
+            // would put that crate's chroma upsampling in the comparison, and a JPEG with
+            // its chroma at half size, like KCC's, shows it as a difference of its own.
             let decoded = image::load_from_memory(&page.bytes).unwrap();
-            let name = format!("{n:04}_{i}.png");
-            let path = format!("{out_dir}/{name}");
-            if decoded.color().has_color() {
-                decoded.to_rgb8().save(&path).unwrap();
-            } else {
-                decoded.to_luma8().save(&path).unwrap();
-            }
+            let name = format!("{n:04}_{i}.{}", page.extension);
+            std::fs::write(format!("{out_dir}/{name}"), &page.bytes).unwrap();
             pieces.push(format!(
                 r#"{{"file": "{name}", "size": [{}, {}], "role": "{:?}", "ext": "{}", "black_background": {}}}"#,
                 decoded.width(),

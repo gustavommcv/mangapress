@@ -39,8 +39,8 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 REFERENCE_KCC = "12.0.0"
 
 # Mean absolute difference allowed between the two tools' pixels, in levels
-# out of 255. The independent resampler follows Pillow, but JPEG encoding
-# and decoding use different libraries; a real
+# out of 255. Both sides are taken before the JPEG step (see README.md), so
+# this is the processing, with the independent resampler; a real
 # divergence — a different crop, a contrast stretch applied by one side only
 # — shows up as several levels.
 GRAY_LIMIT = 1.0
@@ -290,7 +290,9 @@ def main():
         run(oracle + [kcc_dir, list_file] + kcc_base + kcc_extra)
         if name == "default options":
             dither_source = kcc_dir
-        run([dump, dump_dir, list_file, kcc_base[kcc_base.index("-p") + 1]] + dump_base + dump_extra)
+        # KCC's side is its pixels before its JPEG save; ours is lossless too unless the scenario is about PNG output.
+        lossless = [] if any(flag.startswith("--forcepng") for flag in dump_base + dump_extra) else ["--lossless"]
+        run([dump, dump_dir, list_file, kcc_base[kcc_base.index("-p") + 1]] + dump_base + dump_extra + lossless)
         before = len(report.failures)
         worst = compare_pages(report, name, files, kcc_dir, dump_dir)
         status = "ok  " if len(report.failures) == before else "FAIL"

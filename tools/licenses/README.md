@@ -48,6 +48,10 @@ Clarifications use SHA-256 hashes of original files, not rewritten license text:
 - Pathfinder packages omit their license files. Use upstream files at the package commits;
   geometry's recorded commit is unavailable, so its clarification explicitly pins the
   reachable simd commit, which still declares geometry 0.5.1.
+- `jpeg-encoder` is `(MIT OR Apache-2.0) AND IJG`: the IJG's license has no file of its own in
+  the crate, only the header of `src/fdct.rs`, so that header (from the line that begins it to the
+  last line of the license text) is the notice, checked by the hash of that text. The IJG asks
+  for an acknowledgement in the documentation as well; `THIRD-PARTY-NOTICES.md` has it.
 - The tool's existing `rustix` workaround handles that crate's `COPYRIGHT` layout.
 
 If these files or package commits change, review upstream licensing and update the hashes

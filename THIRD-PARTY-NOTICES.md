@@ -16,6 +16,16 @@ from those packages. It is generated separately for each release target. Build d
 included as a conservative superset; development-only dependencies are excluded. See
 [notice generation](tools/licenses/README.md) for the tooling and source-file clarifications.
 
+## Independent JPEG Group
+
+This software is based in part on the work of the Independent JPEG Group.
+
+The JPEG pages and covers mangapress writes are encoded with the
+[`jpeg-encoder`](https://github.com/vstroebel/jpeg-encoder) crate, whose forward DCT is a port
+of the integer DCT of libjpeg (through mozjpeg). The IJG's license text, which the crate
+carries in the header of that file, is reproduced in `DEPENDENCY-LICENSES.txt` with the
+crate's MIT and Apache-2.0 licenses.
+
 ## KCC (Kindle Comic Converter)
 
 <https://github.com/ciromattia/kcc>

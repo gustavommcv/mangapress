@@ -9,8 +9,7 @@ use crate::error::Result;
 use crate::fill_check::fill_check;
 use crate::quantize::Container;
 use crate::resize::{self, ResizeOptions};
-use image::codecs::jpeg::JpegEncoder;
-use image::{ExtendedColorType, ImageEncoder, ImageFormat};
+use image::ImageFormat;
 
 /// Options that drive a single conversion run. Mirrors the relevant subset
 /// of `kcc-c2e.py`'s argument groups (MAIN/PROCESSING) — see
@@ -455,7 +454,7 @@ fn finish_page(
         page
     };
 
-    let mut bytes = Vec::new();
+    let bytes;
     let extension = if options.force_png {
         let palette = options.palette();
         match quantized_container(options) {
@@ -470,8 +469,12 @@ fn finish_page(
                 } else {
                     crate::quantize::quantize_with_floyd_steinberg(&page, palette)
                 };
-                image::DynamicImage::ImageLuma8(gray)
-                    .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Png)?;
+                bytes = crate::png_out::encode(
+                    gray.as_raw(),
+                    gray.width(),
+                    gray.height(),
+                    image::ExtendedColorType::L8,
+                )?;
                 "png"
             }
         }
@@ -481,11 +484,12 @@ fn finish_page(
         // regardless of device profile -- noticeably more compressed than
         // KCC's own 85/90 default for every page this pipeline produces.
         let quality = options.jpeg_quality();
-        JpegEncoder::new_with_quality(&mut std::io::Cursor::new(&mut bytes), quality).write_image(
+        bytes = crate::jpeg::encode(
             page.as_raw(),
             page.width(),
             page.height(),
-            ExtendedColorType::L8,
+            crate::jpeg::Samples::Gray,
+            quality,
         )?;
         "jpg"
     };
@@ -615,18 +619,23 @@ fn finish_color_page(
         page
     };
 
-    let mut bytes = Vec::new();
+    let bytes;
     let extension = if options.force_png && options.force_png_rgb {
-        image::DynamicImage::ImageRgb8(page)
-            .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Png)?;
-        "png"
-    } else {
-        let quality = options.jpeg_quality();
-        JpegEncoder::new_with_quality(&mut std::io::Cursor::new(&mut bytes), quality).write_image(
+        bytes = crate::png_out::encode(
             page.as_raw(),
             page.width(),
             page.height(),
-            ExtendedColorType::Rgb8,
+            image::ExtendedColorType::Rgb8,
+        )?;
+        "png"
+    } else {
+        let quality = options.jpeg_quality();
+        bytes = crate::jpeg::encode(
+            page.as_raw(),
+            page.width(),
+            page.height(),
+            crate::jpeg::Samples::Rgb,
+            quality,
         )?;
         "jpg"
     };

@@ -27,9 +27,8 @@
 
 use crate::error::Result;
 use crate::resize::round_half_even;
-use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use image::{ExtendedColorType, ImageEncoder};
+use image::ExtendedColorType;
 
 type Buffer<P> = image::ImageBuffer<P, Vec<u8>>;
 
@@ -97,9 +96,17 @@ fn finish_cover<P: image::Pixel<Subpixel = u8> + 'static>(
         }
     };
 
-    let mut bytes = Vec::new();
-    JpegEncoder::new_with_quality(&mut std::io::Cursor::new(&mut bytes), options.jpeg_quality)
-        .write_image(cover.as_raw(), cover.width(), cover.height(), color_type)?;
+    let samples = match color_type {
+        ExtendedColorType::Rgb8 => crate::jpeg::Samples::Rgb,
+        _ => crate::jpeg::Samples::Gray,
+    };
+    let bytes = crate::jpeg::encode(
+        cover.as_raw(),
+        cover.width(),
+        cover.height(),
+        samples,
+        options.jpeg_quality,
+    )?;
     Ok((bytes, smart_cropped))
 }
 

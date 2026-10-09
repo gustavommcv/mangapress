@@ -73,3 +73,24 @@ override-git-commit = "6c3c0466f451c5bd2007087728cd168798cd64e8"
 [[pathfinder_geometry.clarify.git]]
 path = "LICENSE-MIT"
 checksum = "0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720"
+
+# jpeg-encoder's integer DCT is the Independent JPEG Group's; the notice it must carry (the
+# IJG license, which asks for an acknowledgement in the documentation) is the header of that file.
+[jpeg-encoder]
+accepted = ["IJG"]
+[jpeg-encoder.clarify]
+license = "(MIT OR Apache-2.0) AND IJG"
+[[jpeg-encoder.clarify.files]]
+path = "LICENSE-MIT"
+license = "MIT"
+checksum = "4d022727ea392ebba2fe5e9a5f78c610a0eae506b491f3db29c78b6d430d6503"
+[[jpeg-encoder.clarify.files]]
+path = "LICENSE-APACHE"
+license = "Apache-2.0"
+checksum = "85a884980abd6032fc6b5439ba918ab16db9ac9051b5cf18db9c27c587df07c0"
+[[jpeg-encoder.clarify.files]]
+path = "src/fdct.rs"
+license = "IJG"
+checksum = "934eff290361d447bcfd2a7fee995be91e266edb09dffd195697acd43828be6d"
+start = "This file was part of the Independent JPEG Group's software:"
+end = "assumed by the product vendor."

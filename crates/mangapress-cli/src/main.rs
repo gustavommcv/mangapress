@@ -281,12 +281,20 @@ struct PageProcessingFailure {
     diagnostic: String,
 }
 
+/// A chapter's source pages, processed.
+#[derive(Debug)]
+struct ProcessedChapter {
+    pages: Vec<Page>,
+    /// The positions (zero-based) of the source pages whose file ended before the image did.
+    truncated_sources: Vec<usize>,
+}
+
 fn process_chapter_pages(
     pages: &[Page],
     options: &PipelineOptions,
     first_chapter: bool,
     on_page_done: impl Fn(usize, usize) -> std::io::Result<()> + Sync,
-) -> Result<Vec<Page>, PageProcessingFailure> {
+) -> Result<ProcessedChapter, PageProcessingFailure> {
     let progress = Mutex::new((vec![false; pages.len()], 0usize));
     let outputs: Vec<Vec<ProcessedPage>> = pages
         .par_iter()
@@ -324,7 +332,11 @@ fn process_chapter_pages(
         .collect::<Result<Vec<_>, PageProcessingFailure>>()?;
 
     let mut flattened = Vec::with_capacity(pages.len());
-    for (source, page_outputs) in pages.iter().zip(outputs) {
+    let mut truncated_sources = Vec::new();
+    for (position, (source, page_outputs)) in pages.iter().zip(outputs).enumerate() {
+        if page_outputs.iter().any(|page| page.source_truncated) {
+            truncated_sources.push(position);
+        }
         for (piece, page) in page_outputs.into_iter().enumerate() {
             flattened.push(Page {
                 source_path: source.source_path.clone(),
@@ -336,7 +348,10 @@ fn process_chapter_pages(
             });
         }
     }
-    Ok(flattened)
+    Ok(ProcessedChapter {
+        pages: flattened,
+        truncated_sources,
+    })
 }
 
 fn main() -> anyhow::Result<()> {
@@ -1228,7 +1243,40 @@ fn run<W: std::io::Write + Send>(
                 Ok(())
             },
         ) {
-            Ok(pages) => pages,
+            Ok(processed) => {
+                for &position in &processed.truncated_sources {
+                    let file = chapter.pages[position]
+                        .source_path
+                        .as_ref()
+                        .map(|path| path.display().to_string());
+                    let message = format!(
+                        "Page {} of chapter '{}'{} ends before its image does: what was read is kept and the rest of the page is blank.",
+                        position + 1,
+                        chapter_title,
+                        file.as_ref().map(|file| format!(" ({file})")).unwrap_or_default(),
+                    );
+                    if events.enabled() {
+                        events
+                            .emit(
+                                "warning",
+                                json!({
+                                    "severity": "warning",
+                                    "code": "page_truncated",
+                                    "stage": "process",
+                                    "path": file.clone().unwrap_or_else(|| input_path.clone()),
+                                    "recoverable": true,
+                                    "message": message,
+                                    "chapter": chapter_title.clone(),
+                                    "page": position + 1,
+                                }),
+                            )
+                            .map_err(event_write_failure)?;
+                    } else {
+                        eprintln!("warning: {message}");
+                    }
+                }
+                processed.pages
+            }
             Err(error) => {
                 *failure = RunFailure::new(
                     "page_processing_failed",
@@ -1788,7 +1836,9 @@ mod tests {
             .collect();
 
         let options = minimal_pipeline_options();
-        let processed = process_chapter_pages(&pages, &options, false, |_, _| Ok(())).unwrap();
+        let processed = process_chapter_pages(&pages, &options, false, |_, _| Ok(()))
+            .unwrap()
+            .pages;
         assert_eq!(processed.len(), gray_levels.len());
         for (source, result) in pages.iter().zip(&processed) {
             assert_eq!(result.source_path, source.source_path);

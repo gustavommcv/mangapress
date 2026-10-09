@@ -32,18 +32,17 @@ not turn the Rust-only or excluded entries below into direct KCC comparisons.
 | `--output`, `--nokepub` | Real explicit destinations; extended Kobo EPUB with `--nokepub` | Derived filenames, collision handling and non-overwrite rules use Rust CLI tests; deliberately differ from KCC. |
 | Folder sorting, flat chapter navigation | Chapter/page 2 versus 10; actual NCX/nav targets and spine order; a name before the names that continue it, digits of other scripts, extensions of different case, inside a folder and a `.cbz`; the order the real `natsort` gives for 1657 names in 57 groups (`natsort_vectors.py`, checked by a Rust test) | Roman-numeral sorting and repeated chapter-basename handling are not directly compared. Chapter-key collision handling and the order of folder names with punctuation are documented differences (ADR 0019, ORD-5). |
 | Layout Mangabound writes (volume folder, chapter folders, `p0001` pages), as a `.cbz` | One volume and a series of two volumes, compared page by page with the navigation and title | Mangabound hands over only this layout; the author is given on the command line, as it does. A case in `books.py` can now be a tree of files, written as a folder or a `.cbz` (`trees.py`). |
-| Transparent/indexed inputs and orientation boundaries | RGBA and palette alpha, odd sizes, square/near-square synthetic pages; a book of stored forms (color profiles, four-channel JPEG, 16-bit color PNG, palettes, low bit depths, transparency of every PNG kind, JPEG chroma layouts, GIF, WebP, orientation tags) as gray and as color output; a book of page shapes from one pixel to long strips, with default cropping | 16-bit gray PNG, files cut short, AVIF and JPEG 2000 pages are not in these books: the tools differ there. Rust tests cover supported codecs and input rejection. |
+| Transparent/indexed inputs and orientation boundaries | RGBA and palette alpha, odd sizes, square/near-square synthetic pages; a book of stored forms (color profiles, four-channel JPEG, 16-bit color PNG, palettes, low bit depths, transparency of every PNG kind, JPEG chroma layouts, GIF, WebP, orientation tags) as gray and as color output; a book of page shapes from one pixel to long strips, with default cropping | 16-bit gray PNG, AVIF and JPEG 2000 pages are not in these books: the tools differ there. Pages cut short are four books of their own (PNG, palette PNG, interlaced PNG, GIF with a transparent color); a truncated WebP is refused by both tools, and a JPEG cut short agrees to within decoder rounding, except inside the first scan of a progressive file. Rust tests cover supported codecs and input rejection. |
 
 ## Differences left open
 
 [differences.py](differences.py) runs both CLIs on cases that differ today and that
 [ADR 0019](../../docs/adr/0019-differences-from-kcc-found-by-the-october-comparison.md) left open, and
 [ADR 0020](../../docs/adr/0020-follow-kcc-on-the-differences-left-open.md) decided to follow:
-a PNG cut short and the chroma layout of color JPEG output. It fails until each is followed, and a case moves into
-`books.py` when it is.
+the chroma layout of color JPEG output. It fails until that is followed, and the case moves into `books.py` when it is.
 The differences that are kept on purpose are in the same ADR. Others were followed, and are now direct
 comparisons in `books.py`: the order of pages beside chapter folders, and of pages whose
-names continue one another or use digits of another script; the contents entry for pages directly in a book;
+names continue one another or use digits of another script; a PNG or GIF cut short; the contents entry for pages directly in a book;
 a `.cbz` with one top folder and the `ComicInfo.xml` inside it; a `ComicInfo.xml` that is damaged or in UTF-16;
 the sign of a negative issue number; and the gray levels and JPEG quality that a custom size gives an old
 Kindle or a Scribe.

@@ -21,7 +21,7 @@ from epub_book import member, read_epub
 import book_inputs
 from kcc_oracle import load_kcc
 from parity import COLOUR_LIMIT, GRAY_LIMIT, HERE, REFERENCE_KCC, REPO, Report, matches, run
-from trees import INFO, comic_info, corpus_pages, tree as book_tree, write_source
+from trees import INFO, comic_info, corpus_pages, cut_short, interlaced_png, palette_png, png, transparent_gif, tree as book_tree, write_source
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 
@@ -97,6 +97,15 @@ CASES = [
          tree=book_tree(["Vol 1/intro.png", "Vol 1/zz.png", "Vol 1/Ch 1/1.png", "Vol 1/Ch 2/1.png"])),
     Case("EPUB: a Mangabind series of two volumes as a .cbz", kcc=FULL_TONE + AUTHOR, ours=FULL_TONE + AUTHOR,
          tree=book_tree(MANGABIND_SERIES, info=None), archive=True),
+    # A PNG or GIF that ends before its image does is a page, blank where the data ends: black, or the first color of a palette.
+    Case("EPUB: a PNG cut short is a page, blank where the data ends", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(["Pages/001.png"], extra={"Pages/002.png": cut_short(png)})),
+    Case("EPUB: a palette PNG cut short starts from its first color", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(["Pages/001.png"], extra={"Pages/002.png": cut_short(palette_png)})),
+    Case("EPUB: an interlaced PNG cut short keeps the passes it has", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(["Pages/001.png"], extra={"Pages/002.png": cut_short(interlaced_png, 0.5)})),
+    Case("EPUB: a GIF with a transparent color cut short", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(["Pages/001.png"], extra={"Pages/002.gif": cut_short(transparent_gif, 0.5)})),
     # A negative issue number is padded after its sign.
     Case("EPUB: a negative issue number is padded after its sign", kcc=FULL_TONE, ours=FULL_TONE,
          tree=book_tree(CHAPTERS, info=comic_info("<Series>S</Series><Number>-1</Number><Writer>Ann</Writer>"))),

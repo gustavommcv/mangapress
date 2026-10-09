@@ -126,6 +126,7 @@ Version 1 issue codes are:
 | `output_exists` | `plan` | Another entry occupies the chosen output; a safe name is used |
 | `output_plan_failed` | `plan` | The destination has an invalid name/parent or could not be staged before processing |
 | `output_directory_create_failed` | `write` | The output directory could not be created |
+| `page_truncated` | `process` | A PNG or GIF page ended before its image did; what was read is kept, the rest of the page is blank, and the book is made. Carries `chapter` and `page` (its position in the chapter) |
 | `page_processing_failed` | `process` | A named page in a named chapter failed conversion |
 | `webtoon_split_failed` | `process` | A chapter's strips could not be cut into pages |
 | `cover_build_failed` | `package` | The cover could not be made from its image |

@@ -137,8 +137,10 @@ option resolver, including the Scribe width cap. The exact dither check still
 exercises all three palettes (`K11`, `K2`, `K1`), independently of the selected device.
 
 Books exercise selected EPUB/CBZ behavior, not every markup attribute or every option pairing.
-The generated books above are single-chapter folders. A 16-bit gray PNG, a file cut short,
-and AVIF or JPEG 2000 pages are left out of them because the tools differ there.
+The generated books above are single-chapter folders. A 16-bit gray PNG
+and AVIF or JPEG 2000 pages are left out of them because the tools differ there. Pages cut short have their
+own books (a PNG, a palette PNG, an interlaced PNG and a GIF); a JPEG cut short is read by both tools, and
+agrees to within decoder rounding unless it was cut inside the first scan of a progressive file.
 PDF books, labelled-spread joining, ComicInfo bookmarks, external/Covers-folder selection, and
 every smart-cover threshold are not directly compared. Relevant Rust tests cover them separately.
 Some tiny crop inputs crash KCC's edge detector; crop-boundary fixtures use nonempty edge strips.

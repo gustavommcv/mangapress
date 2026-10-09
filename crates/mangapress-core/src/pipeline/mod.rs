@@ -4,11 +4,21 @@
 
 pub mod spread;
 
-use crate::crop::{self, Background, CropPolicy};
+mod cropping;
+mod finishing;
+mod sizing;
+
+use cropping::crop_whole_page;
+use finishing::finish_page;
+use spread::stack_halves;
+
+use crate::crop::Background;
 use crate::error::Result;
 use crate::fill_check::fill_check;
+#[cfg(test)]
 use crate::quantize::Container;
-use crate::resize::{self, ResizeOptions};
+#[cfg(test)]
+use finishing::quantized_container;
 use image::ImageFormat;
 
 /// Options that drive a single conversion run. Mirrors the relevant subset
@@ -30,7 +40,7 @@ pub struct PipelineOptions {
     /// `--croppingminimum`, 0-100: only actually crop if doing so would keep
     /// at least this percentage of the page's area. Converted to
     /// [`crate::crop::CropPolicy::minimum_area_ratio`]'s 0.0-1.0 fraction in
-    /// [`crop_policy`].
+    /// [`cropping::crop_policy`].
     pub cropping_minimum: f32,
     /// `--preservemargin`, 0-100: back the computed crop off by this
     /// percentage after the 10% cap, so *some* margin is deliberately kept.
@@ -52,7 +62,7 @@ pub struct PipelineOptions {
     /// `--norotate`: keep the whole-spread copy upright instead of turning
     /// it. An upright spread is not fitted to the device like a page: it is
     /// only shrunk, and only when it exceeds two device widths by one device
-    /// height (see [`resize_upright_spread`]).
+    /// height (see [`sizing::resize_upright_spread`]).
     pub no_rotate: bool,
     /// `--rotatefirst`: in `Both` mode, put the whole-spread copy before the
     /// two halves instead of after them.
@@ -378,310 +388,12 @@ pub fn process_page(
     Ok(outputs)
 }
 
-/// Margin (and page-number) cropping, then inter-panel cropping, on the
-/// whole source page. `proxy` is the page's grayscale, which both detectors
-/// read; the page's own RGB pixels are what gets cropped.
-fn crop_whole_page(
-    page: image::RgbImage,
-    proxy: image::GrayImage,
-    options: &PipelineOptions,
-    background: Background,
-) -> image::RgbImage {
-    // A webtoon page is only ever inter-panel cropped.
-    let cropping = if options.webtoon {
-        CroppingMode::Disabled
-    } else {
-        options.cropping
-    };
-    let crop_box = match cropping {
-        CroppingMode::Disabled => None,
-        CroppingMode::Margins => {
-            crop::margin::compute_margin_crop(&proxy, &crop_policy(options, background))
-        }
-        CroppingMode::MarginsAndPageNumbers => {
-            crop::page_number::compute_margin_crop_ignoring_page_number(
-                &proxy,
-                &crop_policy(options, background),
-            )
-        }
-    };
-    let (page, proxy) = match crop_box {
-        Some(crop_box) => (
-            crop::apply_crop(&page, crop_box),
-            crop::apply_crop(&proxy, crop_box),
-        ),
-        None => (page, proxy),
-    };
-
-    crop::inter_panel::crop_empty_inter_panel_sections_using(
-        page,
-        &proxy,
-        options.inter_panel_crop,
-        background,
-    )
-}
-
-fn finish_page(
-    page: image::RgbImage,
-    role: spread::PageRole,
-    target: (u32, u32),
-    options: &PipelineOptions,
-    background: Background,
-    is_color: bool,
-) -> Result<ProcessedPage> {
-    let effective_gamma = options
-        .gamma
-        .filter(|&g| g >= 0.1)
-        .unwrap_or(options.profile.gamma);
-    let page = crate::contrast::gamma_correct_rgb(&page, effective_gamma);
-    if is_color && options.force_color {
-        return finish_color_page(page, role, target, options, background);
-    }
-    let page = crate::color::to_gray(&page);
-
-    let page =
-        if options.noautocontrast || options.webtoon || (is_color && !options.color_autocontrast) {
-            page
-        } else {
-            crate::contrast::autocontrast(&page, options.autolevel)
-        };
-
-    let page = resize_for_device(page, role, target, options, background);
-
-    let page = if options.erase_rainbow {
-        crate::rainbow::erase_rainbow_artifacts_gray(&page)
-    } else {
-        page
-    };
-
-    let bytes;
-    let extension = if options.force_png {
-        let palette = options.palette();
-        match quantized_container(options) {
-            Container::IndexedPng => {
-                let indices = crate::quantize::quantize_to_palette_indices(&page, palette);
-                bytes = crate::quantize::encode_indexed_png(page.dimensions(), &indices, palette)?;
-                "png"
-            }
-            Container::GrayPng => {
-                let gray = if options.no_quantize {
-                    page.clone()
-                } else {
-                    crate::quantize::quantize_with_floyd_steinberg(&page, palette)
-                };
-                bytes = crate::png_out::encode(
-                    gray.as_raw(),
-                    gray.width(),
-                    gray.height(),
-                    image::ExtendedColorType::L8,
-                )?;
-                "png"
-            }
-        }
-    } else {
-        // Not `DynamicImage::write_to(..., ImageFormat::Jpeg)`: that always
-        // encodes at the `image` crate's own default quality of 75,
-        // regardless of device profile -- noticeably more compressed than
-        // KCC's own 85/90 default for every page this pipeline produces.
-        let quality = options.jpeg_quality();
-        bytes = crate::jpeg::encode(
-            page.as_raw(),
-            page.width(),
-            page.height(),
-            crate::jpeg::Samples::Gray,
-            quality,
-        )?;
-        "jpg"
-    };
-    Ok(ProcessedPage {
-        extension: extension.to_string(),
-        bytes,
-        black_background: fill_is_black(options, background),
-        role,
-        source_truncated: false,
-    })
-}
-
-/// How a `--forcepng` page is stored — see [`Container`]. Upstream's rule
-/// minus its GIF branch: plain grayscale where upstream turns the page back
-/// into grayscale (or never makes it a palette image), a palette PNG
-/// otherwise. The oldest-Kindle exception does not survive a custom
-/// resolution, as upstream's doesn't (it renames the profile "Custom" before
-/// it checks).
-fn quantized_container(options: &PipelineOptions) -> Container {
-    let custom_resolution =
-        options.width_override.unwrap_or(0) != 0 || options.height_override.unwrap_or(0) != 0;
-    let oldest_kindle =
-        !custom_resolution && matches!(options.profile.code, "K1" | "K2" | "K34" | "KDX");
-
-    if options.no_quantize
-        || options.png_legacy
-        || options.output_format == OutputFormat::Pdf
-        || (options.output_format == OutputFormat::Cbz && oldest_kindle)
-    {
-        Container::GrayPng
-    } else {
-        Container::IndexedPng
-    }
-}
-
 /// What surrounds a page is black: `--blackborders` says so, or the page's
 /// own background is dark and `--whiteborders` doesn't overrule it.
 /// Upstream's `fill`, which decides both the pad color and the EPUB page
 /// background.
 fn fill_is_black(options: &PipelineOptions, background: Background) -> bool {
     options.black_borders || (!options.white_borders && background == Background::Dark)
-}
-
-/// `--maximizestrips`: the page's two halves, the first-read one on top, on
-/// a canvas half as wide and twice as tall. When the width is odd the right
-/// half is one column wider than the canvas and loses that column, as it
-/// does upstream.
-fn stack_halves(page: &image::RgbImage, manga_style: bool) -> image::RgbImage {
-    let (w, h) = page.dimensions();
-    let half = w / 2;
-    let left = image::imageops::crop_imm(page, 0, 0, half, h).to_image();
-    let right = image::imageops::crop_imm(page, half, 0, w - half, h).to_image();
-    let (first, second) = if manga_style {
-        (right, left)
-    } else {
-        (left, right)
-    };
-    let mut stacked = image::RgbImage::new(half.max(1), h * 2);
-    image::imageops::overlay(&mut stacked, &first, 0, 0);
-    image::imageops::overlay(&mut stacked, &second, 0, h as i64);
-    stacked
-}
-
-/// Fits a page to the device — or, for an upright whole spread, applies
-/// that case's own rule. The same for a grayscale page and a color one.
-fn resize_for_device<P: image::Pixel<Subpixel = u8> + 'static>(
-    page: image::ImageBuffer<P, Vec<u8>>,
-    role: spread::PageRole,
-    target: (u32, u32),
-    options: &PipelineOptions,
-    background: Background,
-) -> image::ImageBuffer<P, Vec<u8>> {
-    if role == spread::PageRole::Rotated && options.no_rotate && !options.wallpaper {
-        return resize_upright_spread(page, target);
-    }
-    resize::resize_page(
-        &page,
-        &ResizeOptions {
-            target,
-            upscale: options.upscale,
-            stretch: options.stretch,
-            wallpaper: options.wallpaper,
-            // A custom resolution is KCC's Custom profile, not KDX.
-            is_kdx_profile: options.profile.code == "KDX"
-                && options.width_override.is_none()
-                && options.height_override.is_none(),
-            pads_for_cbz_or_pdf: matches!(
-                options.output_format,
-                OutputFormat::Cbz | OutputFormat::Pdf
-            ),
-            white_borders: options.white_borders,
-            fill: if fill_is_black(options, background) {
-                0
-            } else {
-                255
-            },
-        },
-    )
-}
-
-/// The rest of the pipeline for a color page kept in color
-/// (`--forcecolor`), after gamma: no grayscale conversion and no
-/// quantization; autocontrast only with `--colorautocontrast`, and then on
-/// all three channels at once so the colors keep their balance; resized as
-/// a gray page is; saved as RGB JPEG, or as PNG with `--force-png-rgb`.
-///
-/// With `--force-png-rgb` the page is saved as RGB PNG on every device;
-/// upstream writes a 256-color GIF for a Kindle profile's EPUB, which this
-/// crate does not do for grayscale pages either (see
-/// [`crate::quantize`]).
-fn finish_color_page(
-    page: image::RgbImage,
-    role: spread::PageRole,
-    target: (u32, u32),
-    options: &PipelineOptions,
-    background: Background,
-) -> Result<ProcessedPage> {
-    let page = if !options.noautocontrast && !options.webtoon && options.color_autocontrast {
-        crate::contrast::autocontrast_rgb(&page, options.autolevel)
-    } else {
-        page
-    };
-    let page = resize_for_device(page, role, target, options, background);
-    let page = if options.erase_rainbow {
-        crate::rainbow::erase_rainbow_artifacts_rgb(&page)
-    } else {
-        page
-    };
-
-    let bytes;
-    let extension = if options.force_png && options.force_png_rgb {
-        bytes = crate::png_out::encode(
-            page.as_raw(),
-            page.width(),
-            page.height(),
-            image::ExtendedColorType::Rgb8,
-        )?;
-        "png"
-    } else {
-        let quality = options.jpeg_quality();
-        bytes = crate::jpeg::encode(
-            page.as_raw(),
-            page.width(),
-            page.height(),
-            crate::jpeg::Samples::Rgb,
-            quality,
-        )?;
-        "jpg"
-    };
-    Ok(ProcessedPage {
-        extension: extension.to_string(),
-        bytes,
-        black_background: fill_is_black(options, background),
-        role,
-        source_truncated: false,
-    })
-}
-
-/// How a whole spread that was not to be rotated is sized: left alone
-/// unless it is larger than two device widths by one device height, and
-/// then only shrunk to fit that. Never fitted to the device like a page,
-/// never enlarged.
-///
-/// This is upstream's rule for every device but a Kindle. For a Kindle
-/// profile's EPUB upstream caps the spread at 1920x1920 instead — the limit
-/// it observes for Amazon's converter, a tenth narrower than the two
-/// screens of a Kindle 11 — and sends a Kindle Scribe's through the
-/// ordinary page resize. Neither serves a book read in KOReader, so
-/// mangapress applies the one rule to every device.
-fn resize_upright_spread<P: image::Pixel<Subpixel = u8> + 'static>(
-    page: image::ImageBuffer<P, Vec<u8>>,
-    target: (u32, u32),
-) -> image::ImageBuffer<P, Vec<u8>> {
-    let (w, h) = page.dimensions();
-    if w > target.0 * 2 || h > target.1 {
-        resize::contain(
-            &page,
-            (target.0 * 2, target.1),
-            image::imageops::FilterType::Lanczos3,
-        )
-    } else {
-        page
-    }
-}
-
-fn crop_policy(options: &PipelineOptions, background: Background) -> CropPolicy {
-    CropPolicy {
-        power: options.cropping_power,
-        minimum_area_ratio: (options.cropping_minimum as f64) / 100.0,
-        preserve_margin_percent: options.preserve_margin_percent,
-        background,
-    }
 }
 
 #[cfg(test)]

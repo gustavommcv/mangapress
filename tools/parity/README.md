@@ -108,18 +108,18 @@ are removed when each case ends. Repeat runs use fresh case folders, not stale b
 
 ## Open differences
 
-[differences.py](differences.py) holds small generated books on which the two tools disagree
-today and for which nobody has decided what mangapress should do. None of them is in
-[ADR 0013](../../docs/adr/0013-follow-a-named-kcc-release.md)'s table:
+[differences.py](differences.py) holds small generated books on which the two tools still disagree
+and the difference is left open on purpose; [ADR 0019](../../docs/adr/0019-differences-from-kcc-found-by-the-october-comparison.md)
+says why, one by one, and lists the ones that are kept as deliberate:
 
 ```sh
 python tools/parity/differences.py --kcc ../kcc-reference
-python tools/parity/differences.py --kcc ../kcc-reference --only ORD --only TOC
+python tools/parity/differences.py --kcc ../kcc-reference --only ORD --only FILE
 ```
 
 It prints what each tool did and exits with an error while any case still differs. It is not
 part of the routine comparison or of CI: a case leaves the file when mangapress follows KCC
-(it then belongs in `books.py`) or when the difference is accepted and recorded in the ADR.
+(it then belongs in `books.py`).
 Each case says whether KCC's behavior is the sensible one, an accident of its implementation,
 a choice mangapress already made, or only a difference in compression.
 
@@ -176,7 +176,7 @@ Changing `rust-toolchain.toml` triggers the PR/main comparison as well.
 
 - [parity.py](parity.py): scenarios and comparisons.
 - [books.py](books.py): actual CLI-to-book comparisons.
-- [differences.py](differences.py): undecided differences, each as a failing case.
+- [differences.py](differences.py): differences left open on purpose, each as a failing case.
 - [epub_book.py](../epub_book.py): shared semantic EPUB inspection, also used by the conformance gate.
 - [kcc_oracle.py](kcc_oracle.py): calls KCC from its checkout.
 - [make_corpus.py](make_corpus.py): generates the test images.

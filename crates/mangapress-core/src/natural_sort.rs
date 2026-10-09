@@ -1,9 +1,12 @@
-//! Natural (human) ordering for filenames/paths — matches KCC's own
-//! `walkSort()` (`shared.py`) and the `natsort` library's `os_sort_keygen()`
-//! used in `sanitizeTree()`: runs of digits compare numerically rather than
-//! character-by-character, so `page2.jpg` sorts before `page10.jpg`. Used
-//! both for ordering extracted archive entries ([`crate::archive::cbz`])
-//! and, later, chapter/page ordering when building output ebooks.
+//! Natural (human) ordering for filenames/paths, after KCC's `walkSort()` (`shared.py`): runs
+//! of digits compare numerically rather than character-by-character, so `page2.jpg` sorts
+//! before `page10.jpg`, and case is ignored. Used both for ordering extracted archive entries
+//! ([`crate::archive::cbz`]) and for the folder reader.
+//!
+//! KCC also puts the files of each folder in order with the `natsort` library's
+//! operating-system ordering (`sanitizeTree()`). That is not the same ordering: it compares
+//! a name without its extension first, and it varies with the platform and the locale. This
+//! module reproduces `walkSort()` only (ADR 0019).
 
 use std::cmp::Ordering;
 use std::path::Path;

@@ -15,7 +15,7 @@ not turn the Rust-only or excluded entries below into direct KCC comparisons.
 | Options / behavior | Direct comparison | Other coverage / limits |
 | --- | --- | --- |
 | `--profile`, `--format` | Full K11 page matrix; seven representative profiles; EPUB/CBZ books | Rust device-resolution tests also cover PDF plans. Not every profile/format pairing. Auto-format differences are deliberate. |
-| `--customwidth`, `--customheight` | KDX/KS3 one-axis override regressions; odd `OTHER` targets | Default JPEG/palette behavior with overrides on other device families is not directly covered. |
+| `--customwidth`, `--customheight` | KDX/KS3 one-axis override regressions; odd `OTHER` targets; the gray levels of an old Kindle (K1) and the JPEG quality of a Scribe (KS3) with a custom size, pages and cover | Default JPEG/palette behavior with overrides on other device families is not directly covered. |
 | `--cropping`, `--croppingpower`, `--croppingminimum`, `--preservemargin`, `--ipc` | Named crop scenarios, 10% cap boundaries; 81% area boundary in extended checks | KCC uses fractions/integers where mangapress uses percentages/enums. Tiny KCC edge-detector crashes are not mangapress failures. |
 | `--manga-style`, `--splitter`, `--rotateright`, `--rotatefirst`, `--norotate`, `--maximizestrips` | All spread roles/order; asymmetric odd/square inputs; LTR/RTL and color interactions in extended checks | Upright Kindle EPUB width-cap difference is deliberate; that baseline uses KoC. |
 | `--upscale`, `--stretch`, `--wallpaper`, `--blackborders`, `--whiteborders` | Named page/CBZ scenarios | Rust tests cover conflicting border flags and sizing branches; not every interaction is directly compared. |
@@ -37,14 +37,16 @@ not turn the Rust-only or excluded entries below into direct KCC comparisons.
 ## Differences left open
 
 [differences.py](differences.py) runs both CLIs on cases that differ today and that
-[ADR 0019](../../docs/adr/0019-differences-from-kcc-found-by-the-october-comparison.md) leaves open:
-the order of pages whose names continue one another or use full-width digits, a PNG cut short, the
-chroma layout of color JPEG output, the sign of a negative issue number, and the gray levels and
-JPEG quality that a custom size gives an old Kindle or a Scribe. It fails until each is followed.
+[ADR 0019](../../docs/adr/0019-differences-from-kcc-found-by-the-october-comparison.md) left open, and
+[ADR 0020](../../docs/adr/0020-follow-kcc-on-the-differences-left-open.md) decided to follow:
+the order of pages whose names continue one another or use full-width digits, a PNG cut short, and the
+chroma layout of color JPEG output. It fails until each is followed, and a case moves into `books.py`
+when it is.
 The differences that are kept on purpose are in the same ADR. The order of pages beside chapter
 folders, the contents entry for pages directly in a book, a `.cbz` with one top folder and
-the `ComicInfo.xml` inside it, and a `ComicInfo.xml` that is damaged or in UTF-16 were followed and
-are now direct comparisons in `books.py`.
+the `ComicInfo.xml` inside it, a `ComicInfo.xml` that is damaged or in UTF-16, the sign of a negative
+issue number, and the gray levels and JPEG quality that a custom size gives an old Kindle or a Scribe
+were followed and are now direct comparisons in `books.py`.
 
 ## Mangapress-only behavior and excluded KCC features
 

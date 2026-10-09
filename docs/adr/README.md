@@ -19,3 +19,4 @@
 17. [Follow folder links only to regular files inside the selected input](0017-folder-links-stay-inside-the-input.md)
 18. [Use the standard EPUB property for centered spine items](0018-standard-centered-spine-property.md) — narrow exception to 13
 19. [Differences from KCC found by the October 2026 comparison: kept, and left open](0019-differences-from-kcc-found-by-the-october-comparison.md) — adds to 13
+20. [Follow KCC on the differences that ADR 0019 left open](0020-follow-kcc-on-the-differences-left-open.md) — closes the open table of 19

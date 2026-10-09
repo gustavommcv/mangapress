@@ -1,8 +1,8 @@
-"""Differences from KCC 12.0.0 that are left open on purpose.
+"""Differences from KCC 12.0.0 that mangapress has not followed yet.
 
 Each case here is a small generated book on which the two real command-line
-tools disagree today, and where mangapress has not been changed to follow KCC
-(ADR 0019 says why, one by one). A case leaves this file when mangapress is
+tools disagree today, and where mangapress is still to be changed to follow KCC
+(ADR 0020 decided that it will). A case leaves this file when mangapress is
 changed to do what KCC does (it then belongs in books.py). Until then this
 script exits with an error, on purpose:
 
@@ -41,7 +41,7 @@ from epub_book import read_epub
 from books import compare_book
 from kcc_oracle import load_kcc
 import make_corpus
-from trees import INFO, MARK_BASE, MARK_STEP, comic_info, encode, marked_page, png, stored, tree, write_source
+from trees import INFO, MARK_BASE, MARK_STEP, comic_info, corpus_pages, encode, marked_page, png, stored, tree, write_source
 from parity import HERE, REFERENCE_KCC, REPO, matches, run
 
 FULL_TONE = ("--forcepng", "--noquantize")
@@ -67,14 +67,6 @@ def cut_short(index):
     return png(index)[:len(png(index)) * 6 // 10]
 
 
-def corpus_pages(colour):
-    def build(directory):
-        pages = [make_corpus.page(140 + n, colour=True) for n in range(3)] if colour else [make_corpus.page(100 + n) for n in range(4)]
-        files = {f"Pages/{n:03d}.png": encode(page, "PNG") for n, page in enumerate(pages)}
-        return dict(files, **{"ComicInfo.xml": INFO.encode()}), None
-    return build
-
-
 def bookmarked_spread(directory):
     """Four source pages, the third a spread that is cut in two, each named in ComicInfo.xml's page list."""
     spread = Image.new("L", (800, 600), 255)
@@ -91,8 +83,6 @@ def strips(directory):
     return dict(files, **{"ComicInfo.xml": INFO.encode()}), None
 
 
-CUSTOM = ("--customwidth", "800", "--customheight", "1200")
-CHAPTERS = ["Ch 1/001.png", "Ch 1/002.png", "Ch 2/001.png"]
 WRAPPED = ["My Wrapper/001.png", "My Wrapper/002.png"]
 
 
@@ -118,10 +108,6 @@ DIFFERENCES = [
     Difference("ORD-2", "defect", "full-width digits count as numbers",
                tree(["A/1.png", "A/２.png", "A/3.png", "A/１０.png", "第１話/1.png", "第２話/1.png", "第１０話/1.png"]),
                "mangapress sorts full-width digits as letters: １０ before ２, in file names and in folder names"),
-    # Table of contents.
-    Difference("META-6", "defect", "a negative issue number is padded after its sign",
-               tree(CHAPTERS, info=comic_info("<Series>S</Series><Number>-1</Number><Writer>Ann</Writer>")),
-               "KCC writes '#-01', mangapress '#0-1'"),
     # Which files are pages, and what a damaged one does.
     Difference("FILE-3", "defect", "a PNG cut short still becomes a page, blank where the data ends",
                tree(["Pages/001.png"], extra={"Pages/002.png": cut_short}),
@@ -130,13 +116,6 @@ DIFFERENCES = [
     Difference("JPEG-1", "defect", "color JPEG pages and covers keep chroma at half size in both directions",
                corpus_pages(colour=True), "mangapress keeps chroma at full size: larger files, and pixels further from KCC's than the limit allows",
                kcc=("-c", "0", "--forcecolor"), ours=("--cropping", "disabled", "--forcecolor")),
-    # Device settings that a custom size changes.
-    Difference("CUST-1", "defect", "with a custom size an old Kindle gets sixteen gray levels",
-               corpus_pages(colour=False), "mangapress keeps the device's own four (Kindle 1) or fifteen (Kindle 2) levels",
-               kcc=("-c", "0", "--forcepng") + CUSTOM, ours=("--cropping", "disabled", "--forcepng") + CUSTOM, profile="K1"),
-    Difference("CUST-2", "defect", "with a custom size a Scribe or Colorsoft goes back to JPEG quality 85",
-               corpus_pages(colour=False), "mangapress keeps quality 90, for pages and for the cover",
-               kcc=("-c", "0") + CUSTOM, ours=("--cropping", "disabled") + CUSTOM, profile="KS3"),
 ]
 
 

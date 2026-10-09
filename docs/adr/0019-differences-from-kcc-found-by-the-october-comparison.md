@@ -4,9 +4,9 @@ Date: 2026-10-09
 
 ## Status
 
-Proposed. It adds to the table of [ADR 0013](0013-follow-a-named-kcc-release.md) without
-changing that record. It becomes accepted with the maintainer's approval of the pull request
-that carries it.
+Accepted on 2026-10-09 with maintainer approval to merge PR #37. It adds to the table of
+[ADR 0013](0013-follow-a-named-kcc-release.md) without changing that record. The maintainer
+then decided to follow KCC on every difference left open below ([ADR 0020](0020-follow-kcc-on-the-differences-left-open.md)).
 
 ## Context
 

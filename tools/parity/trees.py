@@ -9,6 +9,8 @@ import zipfile
 
 from PIL import Image, ImageDraw
 
+import make_corpus
+
 
 MARK_BASE, MARK_STEP = 40, 12
 
@@ -54,6 +56,15 @@ def tree(names, extra=None, info=INFO):
 
 def stored(fmt, **options):
     return lambda index: encode(marked_page(index), fmt, **options)
+
+
+def corpus_pages(colour):
+    """A book of procedurally drawn pages (`make_corpus`): three in colour or four in gray, with ComicInfo.xml."""
+    def build(directory):
+        pages = [make_corpus.page(140 + n, colour=True) for n in range(3)] if colour else [make_corpus.page(100 + n) for n in range(4)]
+        files = {f"Pages/{n:03d}.png": encode(page, "PNG") for n, page in enumerate(pages)}
+        return dict(files, **{"ComicInfo.xml": INFO.encode()}), None
+    return build
 
 
 def write_source(directory, files, archive):

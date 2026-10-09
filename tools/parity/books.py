@@ -21,7 +21,7 @@ from epub_book import member, read_epub
 import book_inputs
 from kcc_oracle import load_kcc
 from parity import COLOUR_LIMIT, GRAY_LIMIT, HERE, REFERENCE_KCC, REPO, Report, matches, run
-from trees import INFO, tree as book_tree, write_source
+from trees import INFO, comic_info, corpus_pages, tree as book_tree, write_source
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 
@@ -56,6 +56,7 @@ MANGABIND_SERIES = MANGABIND_VOLUME + ["v002 - Vol.02/c003 - Three/p0001.png"]
 AUTHOR = ("-a", "Ada")
 WRAPPED = ["My Wrapper/001.png", "My Wrapper/002.png"]
 CHAPTERS = ["Ch 1/001.png", "Ch 1/002.png", "Ch 2/001.png"]
+CUSTOM = ("--customwidth", "800", "--customheight", "1200")
 
 CASES = [
     Case("EPUB: metadata, natural order, cover and navigation"),
@@ -96,6 +97,14 @@ CASES = [
          tree=book_tree(["Vol 1/intro.png", "Vol 1/zz.png", "Vol 1/Ch 1/1.png", "Vol 1/Ch 2/1.png"])),
     Case("EPUB: a Mangabind series of two volumes as a .cbz", kcc=FULL_TONE + AUTHOR, ours=FULL_TONE + AUTHOR,
          tree=book_tree(MANGABIND_SERIES, info=None), archive=True),
+    # A negative issue number is padded after its sign.
+    Case("EPUB: a negative issue number is padded after its sign", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(CHAPTERS, info=comic_info("<Series>S</Series><Number>-1</Number><Writer>Ann</Writer>"))),
+    # A custom size keeps the device's other settings but makes it an ordinary device in two respects.
+    Case("CBZ: a custom size gives an old Kindle sixteen gray levels", "cbz", "K1", CUSTOM, CUSTOM,
+         tree=corpus_pages(colour=False)),
+    Case("EPUB: a custom size takes a Scribe back to JPEG quality 85, cover included", profile="KS3", kcc=CUSTOM, ours=CUSTOM,
+         jpeg=True, tree=corpus_pages(colour=False)),
 ]
 EXTENDED_CASES = [
     Case("EPUB: combined ComicInfo title", kcc=("--metadatatitle", "1"), ours=("--metadatatitle", "combine")),

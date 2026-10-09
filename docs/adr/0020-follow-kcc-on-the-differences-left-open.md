@@ -35,12 +35,13 @@ How each is followed, where the way was a decision:
 - **FILE-3.** A damaged image is read as far as it goes and the rest of the page is blank, as
   KCC does. What ADR 0019 gave as the reason to stop, that stopping names the damaged file, is
   kept by saying so: the run reports the file in a warning, and the book is made.
-- **ORD-1, ORD-2.** A name is compared without its extension first, and digits of every script
-  count as numbers, which is what KCC's sorting library does. Its order also depends on the
-  platform and the locale; mangapress takes the one answer that does not (ADR 0019, ORD-5).
-  Mangabind orders the pages of a chapter by the same rules and has the same two differences,
-  so it is changed first and mangapress follows; the book Mangabound makes then has the order
-  KCC would give.
+- **ORD-1, ORD-2.** A name is split from its extensions and compared without them first, and
+  digits of every script count as numbers, which is what KCC's sorting library does. Its order
+  also depends on the platform and the locale; mangapress takes the one answer that does not
+  (ADR 0019, ORD-5). The order is checked against the real library, name by name, and not only
+  on a few books. Mangabind orders the pages of a chapter by its own rules and has the same two
+  differences, so it is changed too: the book Mangabound makes has the order KCC would give once
+  both are released.
 - **JPEG-1, SIZE-1.** The encoders are chosen so that a color JPEG keeps its chroma at half size
   in both directions and a PNG is as small as KCC's. A new dependency, if one is needed, gets its
   own record.

@@ -258,8 +258,9 @@ mod tests {
         links::file_link(&alias.join("p1.png"), &root.path().join("p2.png")).unwrap();
         let input = super::super::read_book(root.path()).unwrap();
         assert_eq!(input.entries.len(), 2);
-        assert_eq!(input.entries[0].relative_path, Path::new("c001/p1.png"));
-        assert_eq!(input.entries[1].relative_path, Path::new("p2.png"));
+        // The file beside the chapter folder comes first.
+        assert_eq!(input.entries[0].relative_path, Path::new("p2.png"));
+        assert_eq!(input.entries[1].relative_path, Path::new("c001/p1.png"));
         assert!(input.entries.iter().all(|entry| entry.bytes == b"page"));
         assert_eq!(
             input.skipped_links,
@@ -392,9 +393,9 @@ mod tests {
         let input = super::super::read_book(root.path()).unwrap();
         assert_eq!(input.skipped_non_images, 3);
         assert_eq!(input.entries.len(), 2);
-        assert_eq!(input.entries[0].relative_path, Path::new("c001/p1.PNG"));
-        assert_eq!(input.entries[0].bytes, b"page");
-        assert_eq!(input.entries[1].bytes, b"metadata");
+        assert_eq!(input.entries[0].bytes, b"metadata");
+        assert_eq!(input.entries[1].relative_path, Path::new("c001/p1.PNG"));
+        assert_eq!(input.entries[1].bytes, b"page");
         assert_eq!(
             read_folder(root.path()).unwrap().len(),
             5,

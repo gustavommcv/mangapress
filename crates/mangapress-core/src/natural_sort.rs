@@ -47,12 +47,6 @@ fn natural_key(segment: &str) -> Vec<KeyPart> {
     parts
 }
 
-fn path_key(path: &Path) -> Vec<Vec<KeyPart>> {
-    path.components()
-        .map(|c| natural_key(&c.as_os_str().to_string_lossy()))
-        .collect()
-}
-
 /// Compare two plain strings (e.g. directory basenames) in natural order.
 pub fn compare(a: &str, b: &str) -> Ordering {
     natural_key(a).cmp(&natural_key(b))
@@ -61,8 +55,32 @@ pub fn compare(a: &str, b: &str) -> Ordering {
 /// Compare two paths in natural order, component by component — so a
 /// number inside one path segment is never compared against a number in a
 /// different segment as if the whole path were one flat string.
+///
+/// Where one path has a file and the other a folder at the same level, the file comes
+/// first: a folder's own pages come before the folders inside it, as upstream's walk puts
+/// them (a `cover.png` beside the chapter folders is the book's first page, whatever the
+/// chapters are called).
 pub fn compare_paths(a: &Path, b: &Path) -> Ordering {
-    path_key(a).cmp(&path_key(b))
+    let parts = |path: &Path| -> Vec<String> {
+        path.components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect()
+    };
+    let (a, b) = (parts(a), parts(b));
+    for (level, (left, right)) in a.iter().zip(&b).enumerate() {
+        let (left_key, right_key) = (natural_key(left), natural_key(right));
+        if left_key == right_key {
+            continue;
+        }
+        let left_is_file = level + 1 == a.len();
+        let right_is_file = level + 1 == b.len();
+        return match (left_is_file, right_is_file) {
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            _ => left_key.cmp(&right_key),
+        };
+    }
+    a.len().cmp(&b.len())
 }
 
 #[cfg(test)]
@@ -108,5 +126,83 @@ mod tests {
         let a = PathBuf::from("c2 - Two/page001.jpg");
         let b = PathBuf::from("c10 - Ten/page001.jpg");
         assert_eq!(compare_paths(&a, &b), Ordering::Less);
+    }
+
+    #[test]
+    fn a_folders_own_pages_come_before_the_folders_inside_it() {
+        let mut paths = vec![
+            "Chapter 2/001.png",
+            "zz-credits.png",
+            "Chapter 1/002.png",
+            "cover.png",
+            "Chapter 1/001.png",
+        ];
+        paths.sort_by(|a, b| compare_paths(Path::new(a), Path::new(b)));
+        assert_eq!(
+            paths,
+            [
+                "cover.png",
+                "zz-credits.png",
+                "Chapter 1/001.png",
+                "Chapter 1/002.png",
+                "Chapter 2/001.png"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_same_holds_one_level_down() {
+        let mut paths = vec![
+            "Vol 1/Ch 2/1.png",
+            "Vol 1/zz.png",
+            "Vol 1/Ch 1/1.png",
+            "Vol 1/intro.png",
+        ];
+        paths.sort_by(|a, b| compare_paths(Path::new(a), Path::new(b)));
+        assert_eq!(
+            paths,
+            [
+                "Vol 1/intro.png",
+                "Vol 1/zz.png",
+                "Vol 1/Ch 1/1.png",
+                "Vol 1/Ch 2/1.png"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_file_comes_before_a_folder_even_when_it_sorts_after_it_by_name() {
+        assert_eq!(
+            compare_paths(Path::new("z.png"), Path::new("a/1.png")),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_paths(Path::new("a/1.png"), Path::new("z.png")),
+            Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn files_among_themselves_and_folders_among_themselves_keep_the_natural_order() {
+        assert_eq!(
+            compare_paths(Path::new("page2.png"), Path::new("page10.png")),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_paths(Path::new("Ch 2/1.png"), Path::new("Ch 10/1.png")),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn equal_paths_compare_equal_and_a_prefix_comes_first() {
+        assert_eq!(
+            compare_paths(Path::new("a/1.png"), Path::new("a/1.png")),
+            Ordering::Equal
+        );
+        assert_eq!(
+            compare_paths(Path::new("a"), Path::new("a/1.png")),
+            Ordering::Less
+        );
     }
 }

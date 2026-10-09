@@ -89,6 +89,11 @@ CASES = [
          tree=book_tree(WRAPPED), archive=True),
     Case("EPUB: a ComicInfo.xml inside the single top folder of a .cbz", kcc=FULL_TONE, ours=FULL_TONE,
          tree=book_tree(WRAPPED, extra={"My Wrapper/ComicInfo.xml": INFO.encode()}, info=None), archive=True),
+    # Where a folder holds pages and folders, its own pages come first; a loose cover.png is the book's first page.
+    Case("EPUB: pages lying beside chapter folders come first", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(["cover.png", "zz-credits.png", "Chapter 1/001.png", "Chapter 1/002.png", "Chapter 2/001.png"])),
+    Case("EPUB: pages lying beside chapter folders, one level down", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(["Vol 1/intro.png", "Vol 1/zz.png", "Vol 1/Ch 1/1.png", "Vol 1/Ch 2/1.png"])),
     Case("EPUB: a Mangabind series of two volumes as a .cbz", kcc=FULL_TONE + AUTHOR, ours=FULL_TONE + AUTHOR,
          tree=book_tree(MANGABIND_SERIES, info=None), archive=True),
 ]

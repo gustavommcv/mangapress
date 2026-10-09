@@ -120,7 +120,8 @@ Version 1 issue codes are:
 | `spread_labels_ignored` | `inspect` | A `.json` file beside the input is not a list of spread labels; the book is converted without it |
 | `spread_labels_skipped` | `inspect` | Some labelled positions have no page to be joined with; the others were joined |
 | `spread_join_failed` | `inspect` | Two pages labelled as a spread could not be joined into one image |
-| `metadata_parse_failed` | `metadata` | ComicInfo.xml is invalid or unreadable |
+| `comic_info_unreadable` | `metadata` | ComicInfo.xml is not well-formed XML or cannot be decoded; it is ignored and the book is made without it |
+| `metadata_parse_failed` | `metadata` | No longer emitted: an unreadable ComicInfo.xml is the warning `comic_info_unreadable` |
 | `output_collision` | `plan` | The chosen output would overwrite the input; a safe name is used |
 | `output_exists` | `plan` | Another entry occupies the chosen output; a safe name is used |
 | `output_plan_failed` | `plan` | The destination has an invalid name/parent or could not be staged before processing |

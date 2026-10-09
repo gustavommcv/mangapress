@@ -260,6 +260,29 @@ fn a_page_image_is_never_sized_in_percentages_or_made_a_block() {
 }
 
 #[test]
+fn a_page_wrapper_has_no_line_height_so_the_image_keeps_the_room_it_is_given() {
+    // Without it KOReader's crengine takes the room a line keeps under its baseline off the
+    // image's height and draws every page about 12 px short (ADR 0023).
+    for kindle in [false, true] {
+        let mut options = default_options();
+        options.kindle = kindle;
+        let page = read_entry(
+            build_epub(&sample_chapters(), &options).unwrap(),
+            "OEBPS/Text/c0001/p0001.xhtml",
+        );
+        assert!(
+            page.contains("<style type=\"text/css\">\n@page { margin: 0; }\nbody { display: block; margin: 0; padding: 0; }\ndiv { line-height: 0; }\n</style>"),
+            "{page}"
+        );
+        assert_eq!(
+            page.matches("<div ").count(),
+            if kindle { 2 } else { 1 },
+            "{page}"
+        );
+    }
+}
+
+#[test]
 fn a_page_whose_size_cannot_be_read_leaves_the_image_at_its_intrinsic_size() {
     let chapters = vec![Chapter {
         relative_path: PathBuf::from("c001"),

@@ -3,7 +3,8 @@ use super::xml_escape;
 /// One page's XHTML. Upstream reference: `buildHTML()` in upstream's
 /// `comic2ebook.py` — the image is an *inline* `<img>` carrying its own pixel
 /// size as `width`/`height` attributes, inside a `text-align:center` block,
-/// under the same two stylesheet rules upstream ships in its `style.css`.
+/// under the two stylesheet rules upstream ships in its `style.css` and one
+/// more, explained below.
 ///
 /// The image is deliberately never sized in percentages, and never made
 /// `display: block`. An earlier version of this function wrote `img {
@@ -21,6 +22,18 @@ use super::xml_escape;
 /// `width`/`height` by 7% once margins leave it less than its own height —
 /// so this follows upstream's markup as a whole rather than patching the one
 /// property that first looked wrong.
+///
+/// One rule is not upstream's: `div { line-height: 0; }` (ADR 0023). An
+/// inline image sits on the baseline of a line, and the line keeps room below
+/// the baseline for the font's descent. KOReader's crengine takes that room
+/// off the height it allows the image, so a page came out about 12 px shorter
+/// than the area the reader had left, and as wide as its height allowed (0.9%
+/// narrower on a page that fills the screen), leaving a white band under the
+/// page even with the margins at zero. With no line height the band is gone:
+/// a 1072x1448 page in a 1072x1448 area is drawn pixel for pixel, where before
+/// it was drawn at 1063x1436. Measured the same way as the paragraph above,
+/// in KOReader's own crengine; the other ways of closing the gap
+/// (`font-size: 0`, `vertical-align`) closed none or part of it.
 ///
 /// `width`/`height` are `0` when the page's header couldn't be read (see the
 /// caller): the viewport and the image's size attributes are then both left
@@ -62,6 +75,7 @@ pub(super) fn build_page_xhtml(
 <style type="text/css">
 @page {{ margin: 0; }}
 body {{ display: block; margin: 0; padding: 0; }}
+div {{ line-height: 0; }}
 </style>
 </head>
 <body{body_style}>

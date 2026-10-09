@@ -106,6 +106,23 @@ temporary root inside its own output folder; they never use the system temporary
 fixtures and generated books remain under `--work` for diagnosis. Temporary conversion files
 are removed when each case ends. Repeat runs use fresh case folders, not stale books.
 
+## Open differences
+
+[differences.py](differences.py) holds small generated books on which the two tools disagree
+today and for which nobody has decided what mangapress should do. None of them is in
+[ADR 0013](../../docs/adr/0013-follow-a-named-kcc-release.md)'s table:
+
+```sh
+python tools/parity/differences.py --kcc ../kcc-reference
+python tools/parity/differences.py --kcc ../kcc-reference --only ORD --only TOC
+```
+
+It prints what each tool did and exits with an error while any case still differs. It is not
+part of the routine comparison or of CI: a case leaves the file when mangapress follows KCC
+(it then belongs in `books.py`) or when the difference is accepted and recorded in the ADR.
+Each case says whether KCC's behavior is the sensible one, an accident of its implementation,
+a choice mangapress already made, or only a difference in compression.
+
 ## Limits
 
 The main scenarios use the selected profile. Four explicitly labelled custom-resolution
@@ -159,6 +176,7 @@ Changing `rust-toolchain.toml` triggers the PR/main comparison as well.
 
 - [parity.py](parity.py): scenarios and comparisons.
 - [books.py](books.py): actual CLI-to-book comparisons.
+- [differences.py](differences.py): undecided differences, each as a failing case.
 - [epub_book.py](../epub_book.py): shared semantic EPUB inspection, also used by the conformance gate.
 - [kcc_oracle.py](kcc_oracle.py): calls KCC from its checkout.
 - [make_corpus.py](make_corpus.py): generates the test images.

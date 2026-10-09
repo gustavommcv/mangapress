@@ -76,7 +76,7 @@ fn folder_link_warnings_and_page_counts_match_in_plan_and_conversion() {
                         .filter(|event| event["code"] == "link_skipped")
                         .collect();
                     let expected: Vec<_> =
-                        ["c001/loop", "c001/p3.png", "c001/p4.png", "ComicInfo.xml"]
+                        ["ComicInfo.xml", "c001/loop", "c001/p3.png", "c001/p4.png"]
                             .map(|path| input.join(path))
                             .into();
                     let actual: Vec<_> = warnings

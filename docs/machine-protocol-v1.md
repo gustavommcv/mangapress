@@ -84,7 +84,7 @@ Book inspection filters non-image payloads before reading them, while retaining 
 `ComicInfo.xml`. Ignored files still count toward `skipped_non_images`, including on a dry run.
 For folder input, descendant links are followed only to regular files inside the real input
 root. External, unresolvable, and directory links are excluded and reported separately as
-`link_skipped` warnings at `inspect`, on dry-run and conversion, in natural path order. Each
+`link_skipped` warnings at `inspect`, on dry-run and conversion, in natural path order (a folder's own files before the folders inside it). Each
 warning's `path` names the link, not its target; `message` gives the reason without target
 details. If no pages remain, these warnings precede `no_page_images`. See
 [ADR 0017](adr/0017-folder-links-stay-inside-the-input.md) for scope and limitations.

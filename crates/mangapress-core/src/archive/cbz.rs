@@ -242,10 +242,12 @@ mod tests {
         .unwrap();
         assert_eq!(input.skipped_non_images, 3);
         assert_eq!(input.entries.len(), 3);
-        assert_eq!(input.entries[0].relative_path, Path::new("c001/p1.png"));
-        assert_eq!(input.entries[0].bytes, b"one");
-        assert_eq!(input.entries[1].relative_path, Path::new("c002/p1.png"));
-        assert_eq!(input.entries[2].bytes, xml);
+        // A folder's own files come before the folders inside it.
+        assert_eq!(input.entries[0].relative_path, Path::new("ComicInfo.xml"));
+        assert_eq!(input.entries[0].bytes, xml);
+        assert_eq!(input.entries[1].relative_path, Path::new("c001/p1.png"));
+        assert_eq!(input.entries[1].bytes, b"one");
+        assert_eq!(input.entries[2].relative_path, Path::new("c002/p1.png"));
     }
 
     #[test]

@@ -59,6 +59,33 @@ class SemanticComparisonTests(unittest.TestCase):
             books.compare_image(image_bytes(format="JPEG", quality=85),
                                 image_bytes(format="JPEG", quality=50), codec=True)
 
+    def test_jpeg_chroma_scans_and_size_are_compared(self):
+        color = Image.effect_noise((64, 64), 40).convert("RGB")
+
+        def jpeg(**options):
+            output = io.BytesIO()
+            color.save(output, "JPEG", quality=85, **options)
+            return output.getvalue()
+
+        books.compare_image(jpeg(), jpeg(), codec=True)
+        with self.assertRaisesRegex(ValueError, "chroma: KCC half size both ways, mangapress full size"):
+            books.compare_image(jpeg(), jpeg(subsampling=0), codec=True)
+        self.assertEqual(books.scan_count(jpeg()), 1)
+        self.assertEqual(books.scan_count(jpeg(progressive=True)), books.scan_count(jpeg(progressive=True)))
+        self.assertGreater(books.scan_count(jpeg(progressive=True)), 1)
+        with self.assertRaisesRegex(ValueError, "scans: KCC 1"):
+            books.compare_image(jpeg(), jpeg(progressive=True), codec=True)
+
+    def test_a_png_several_times_larger_than_kccs_is_a_failure(self):
+        smooth = Image.linear_gradient("L")
+        tight, loose = io.BytesIO(), io.BytesIO()
+        smooth.save(tight, "PNG", optimize=True)
+        smooth.save(loose, "PNG", compress_level=0)
+        books.compare_image(tight.getvalue(), tight.getvalue(), codec=True)
+        books.compare_image(loose.getvalue(), tight.getvalue(), codec=True)
+        with self.assertRaisesRegex(ValueError, "PNG size"):
+            books.compare_image(tight.getvalue(), loose.getvalue(), codec=True)
+
     def test_png_container_changes_do_not_hide_behind_equal_pixels(self):
         gray = image_bytes()
         output = io.BytesIO()

@@ -12,7 +12,7 @@ import zipfile
 
 from natsort import natsorted
 import numpy as np
-from PIL import Image
+from PIL import Image, JpegImagePlugin
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from book_fixtures import COMIC_INFO, fixture
@@ -24,6 +24,30 @@ from parity import COLOUR_LIMIT, GRAY_LIMIT, HERE, REFERENCE_KCC, REPO, Report, 
 from trees import INFO, comic_info, corpus_pages, cut_short, interlaced_png, palette_png, png, transparent_gif, tree as book_tree, write_source
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+
+# How large mangapress's file may be against KCC's for the same page, as a ratio of bytes. A JPEG is built
+# by two encoders that share the tables and the way the tables are chosen, so the files are nearly the same
+# size; a PNG is deflated by two libraries, and a page may be somewhat larger here but not several times.
+SIZE_RATIOS = {"JPEG": (0.95, 1.05), "PNG": (0.0, 1.4)}
+SAMPLING = {0: "full size", 1: "half width", 2: "half size both ways", -1: "none (gray)"}
+
+
+def scan_count(data):
+    """How many scans a JPEG file has: libjpeg writes one with all the components, an encoder may write several."""
+    at, scans = 2, 0
+    while at + 4 <= len(data):
+        if data[at] != 0xFF:
+            at += 1
+            continue
+        marker = data[at + 1]
+        if marker in (0x00, 0xFF) or 0xD0 <= marker <= 0xD7:
+            at += 2
+        elif marker == 0xD9:
+            break
+        else:
+            scans += marker == 0xDA
+            at += 2 + int.from_bytes(data[at + 2:at + 4], "big")
+    return scans
 
 
 @dataclass(frozen=True)
@@ -106,6 +130,9 @@ CASES = [
          tree=book_tree(["Pages/001.png"], extra={"Pages/002.png": cut_short(interlaced_png, 0.5)})),
     Case("EPUB: a GIF with a transparent color cut short", kcc=FULL_TONE, ours=FULL_TONE,
          tree=book_tree(["Pages/001.png"], extra={"Pages/002.gif": cut_short(transparent_gif, 0.5)})),
+    # A color JPEG page, and the cover, keep their chroma at half size in both directions, as libjpeg does by default.
+    Case("EPUB: color JPEG pages and the cover keep their chroma at half size", kcc=("--forcecolor",), ours=("--forcecolor",),
+         jpeg=True, tree=corpus_pages(colour=True)),
     # A negative issue number is padded after its sign.
     Case("EPUB: a negative issue number is padded after its sign", kcc=FULL_TONE, ours=FULL_TONE,
          tree=book_tree(CHAPTERS, info=comic_info("<Series>S</Series><Number>-1</Number><Writer>Ann</Writer>"))),
@@ -167,8 +194,20 @@ def compare_image(theirs, ours, *, codec=False, kindle_png=False):
             if a.format == b.format == "PNG" and theirs[24:26] != ours[24:26]:
                 # IHDR: bit depth and color type, not compression bytes.
                 raise ValueError(f"PNG depth/type: KCC {list(theirs[24:26])}, mangapress {list(ours[24:26])}")
-            if a.format == "JPEG" and a.quantization != b.quantization:
-                raise ValueError("JPEG quantization tables differ")
+            if a.format == "JPEG":
+                if a.quantization != b.quantization:
+                    raise ValueError("JPEG quantization tables differ")
+                sampling = [JpegImagePlugin.get_sampling(image) for image in (a, b)]
+                if sampling[0] != sampling[1]:
+                    raise ValueError(f"JPEG chroma: KCC {SAMPLING[sampling[0]]}, mangapress {SAMPLING[sampling[1]]}")
+                scans = [scan_count(data) for data in (theirs, ours)]
+                if scans[0] != scans[1]:
+                    raise ValueError(f"JPEG scans: KCC {scans[0]}, mangapress {scans[1]}")
+            if a.format == b.format and a.format in SIZE_RATIOS:
+                low, high = SIZE_RATIOS[a.format]
+                if not low <= len(ours) / len(theirs) <= high:
+                    raise ValueError(f"{a.format} size: KCC {len(theirs)} bytes, mangapress {len(ours)} "
+                                     f"({len(ours) / len(theirs):.2f} times; allowed {low} to {high})")
         x, y = np.asarray(a.convert("RGB"), dtype=np.int16), np.asarray(b.convert("RGB"), dtype=np.int16)
         gray = np.array_equal(x[:, :, 0], x[:, :, 1]) and np.array_equal(x[:, :, 1], x[:, :, 2])
         ours_gray = np.array_equal(y[:, :, 0], y[:, :, 1]) and np.array_equal(y[:, :, 1], y[:, :, 2])

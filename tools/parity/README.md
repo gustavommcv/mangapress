@@ -106,24 +106,6 @@ temporary root inside its own output folder; they never use the system temporary
 fixtures and generated books remain under `--work` for diagnosis. Temporary conversion files
 are removed when each case ends. Repeat runs use fresh case folders, not stale books.
 
-## Open differences
-
-[differences.py](differences.py) holds small generated books on which the two tools still disagree
-and that mangapress is to follow ([ADR 0020](../../docs/adr/0020-follow-kcc-on-the-differences-left-open.md)).
-[ADR 0019](../../docs/adr/0019-differences-from-kcc-found-by-the-october-comparison.md) lists, with its reasons,
-the differences that are kept as deliberate:
-
-```sh
-python tools/parity/differences.py --kcc ../kcc-reference
-python tools/parity/differences.py --kcc ../kcc-reference --only ORD --only FILE
-```
-
-It prints what each tool did and exits with an error while any case still differs. It is not
-part of the routine comparison or of CI: a case leaves the file when mangapress follows KCC
-(it then belongs in `books.py`).
-Each case says whether KCC's behavior is the sensible one, an accident of its implementation,
-a choice mangapress already made, or only a difference in compression.
-
 ## Limits
 
 The main scenarios use the selected profile. Four explicitly labelled custom-resolution
@@ -179,7 +161,8 @@ Changing `rust-toolchain.toml` triggers the PR/main comparison as well.
 
 - [parity.py](parity.py): scenarios and comparisons.
 - [books.py](books.py): actual CLI-to-book comparisons.
-- [differences.py](differences.py): differences left open on purpose, each as a failing case.
+- [trees.py](trees.py): the small books `books.py` builds from a list of file names, and the damaged and unusual pages some of them hold.
+- [natsort_vectors.py](natsort_vectors.py): the order of file names that the real `natsort` gives, kept in a file the Rust tests read.
 - [epub_book.py](../epub_book.py): shared semantic EPUB inspection, also used by the conformance gate.
 - [kcc_oracle.py](kcc_oracle.py): calls KCC from its checkout.
 - [make_corpus.py](make_corpus.py): generates the test images.

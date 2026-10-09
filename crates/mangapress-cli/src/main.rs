@@ -617,20 +617,26 @@ fn run<W: std::io::Write + Send>(
         )
         .map_err(event_write_failure)?;
     let comic_info_xml = metadata::extract_comic_info_entry(&mut source_entries);
-    *failure = RunFailure::new(
-        "metadata_parse_failed",
-        "metadata",
-        true,
-        "Couldn't read ComicInfo.xml metadata from the input.",
-        format!("parsing ComicInfo.xml from {}", input.display()),
-    )
-    .with_path(input_path.clone());
-    let comic_info = comic_info_xml
-        .as_deref()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .map(|xml| metadata::parse_comic_info_xml(&xml))
-        .transpose()
-        .with_context(|| format!("parsing ComicInfo.xml from {}", input.display()))?;
+    // A ComicInfo.xml that cannot be read is no reason to refuse the book: it is made without
+    // that metadata, and the person is told, as upstream does.
+    let comic_info = match comic_info_xml.as_deref() {
+        Some(bytes) => match metadata::parse_comic_info_xml(&metadata::comic_info_text(bytes)) {
+            Ok(info) => Some(info),
+            Err(reason) => {
+                warn(
+                    events,
+                    "comic_info_unreadable",
+                    "metadata",
+                    &input_path,
+                    &format!(
+                        "ComicInfo.xml could not be read and was ignored; the book is made without it ({reason})."
+                    ),
+                )?;
+                None
+            }
+        },
+        None => None,
+    };
     if comic_info.is_some() && !quiet {
         eprintln!("found ComicInfo.xml");
     }

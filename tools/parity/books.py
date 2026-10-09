@@ -54,6 +54,7 @@ COLOUR_KEPT = FULL_TONE + ("--forcecolor", "--force-png-rgb", "--nokepub")
 MANGABIND_VOLUME = ["v001 - Vol.01/c001 - One/p0001.png", "v001 - Vol.01/c001 - One/p0002.png", "v001 - Vol.01/c002 - Two/p0001.png"]
 MANGABIND_SERIES = MANGABIND_VOLUME + ["v002 - Vol.02/c003 - Three/p0001.png"]
 AUTHOR = ("-a", "Ada")
+CHAPTERS = ["Ch 1/001.png", "Ch 1/002.png", "Ch 2/001.png"]
 
 CASES = [
     Case("EPUB: metadata, natural order, cover and navigation"),
@@ -76,6 +77,12 @@ CASES = [
          tree=book_tree(MANGABIND_VOLUME, info=None), archive=True),
     Case("EPUB: pages lying directly in the book are listed under its title", kcc=FULL_TONE, ours=FULL_TONE,
          tree=book_tree(["001.png", "002.png", "003.png"])),
+    # A ComicInfo.xml that cannot be read is ignored and the book is made; the author is given, as the default author differs on purpose.
+    Case("EPUB: a ComicInfo.xml that is not well formed is ignored", kcc=FULL_TONE + AUTHOR, ours=FULL_TONE + AUTHOR,
+         tree=book_tree(CHAPTERS, info="<ComicInfo><Series>S</Series><Writer>Ann</Writer>")),
+    Case("EPUB: a ComicInfo.xml in UTF-16 is read", kcc=FULL_TONE, ours=FULL_TONE,
+         tree=book_tree(CHAPTERS, info=('<?xml version="1.0" encoding="utf-16"?>'
+                                        "<ComicInfo><Series>Sixteen</Series><Writer>Ann</Writer></ComicInfo>").encode("utf-16"))),
     Case("EPUB: a Mangabind series of two volumes as a .cbz", kcc=FULL_TONE + AUTHOR, ours=FULL_TONE + AUTHOR,
          tree=book_tree(MANGABIND_SERIES, info=None), archive=True),
 ]

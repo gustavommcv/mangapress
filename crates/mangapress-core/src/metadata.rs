@@ -39,6 +39,23 @@ pub struct ComicInfo {
     pub bookmarks: Vec<(u32, String)>,
 }
 
+/// The text of a `ComicInfo.xml`, from its bytes. A file in UTF-16, which its byte order
+/// mark gives away, is read as such, as upstream reads it; anything else is taken as UTF-8,
+/// with a character it cannot decode replaced rather than refused.
+pub fn comic_info_text(bytes: &[u8]) -> String {
+    let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {
+        // A half unit left at the end is dropped.
+        let (pairs, _) = rest.as_chunks::<2>();
+        let units: Vec<u16> = pairs.iter().map(|pair| unit(*pair)).collect();
+        String::from_utf16_lossy(&units)
+    };
+    match bytes {
+        [0xFF, 0xFE, rest @ ..] => utf16(rest, u16::from_le_bytes),
+        [0xFE, 0xFF, rest @ ..] => utf16(rest, u16::from_be_bytes),
+        _ => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
 pub fn parse_comic_info_xml(xml: &str) -> crate::error::Result<ComicInfo> {
     let doc = roxmltree::Document::parse(xml)
         .map_err(|e| crate::error::Error::ComicInfo(e.to_string()))?;
@@ -456,5 +473,50 @@ mod tests {
 
         let resolved = resolve(None, None, None, "fallback", MetadataTitleMode::SeriesOnly);
         assert_eq!((resolved.series, resolved.series_position), (None, None));
+    }
+
+    #[test]
+    fn comic_info_text_reads_utf8_with_or_without_a_byte_order_mark() {
+        assert_eq!(comic_info_text("<a>é</a>".as_bytes()), "<a>é</a>");
+        let mut marked = vec![0xEF, 0xBB, 0xBF];
+        marked.extend("<a/>".as_bytes());
+        assert_eq!(comic_info_text(&marked), "\u{FEFF}<a/>");
+    }
+
+    #[test]
+    fn comic_info_text_reads_utf16_of_either_byte_order() {
+        let text = "<a>雨 é</a>";
+        let little: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain(text.encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        let big: Vec<u8> = [0xFE, 0xFF]
+            .into_iter()
+            .chain(text.encode_utf16().flat_map(u16::to_be_bytes))
+            .collect();
+
+        assert_eq!(comic_info_text(&little), text);
+        assert_eq!(comic_info_text(&big), text);
+    }
+
+    #[test]
+    fn comic_info_text_replaces_what_it_cannot_decode_instead_of_refusing_the_file() {
+        assert_eq!(comic_info_text(b"<a>\xFF</a>"), "<a>\u{FFFD}</a>");
+        // A half unit at the end of a UTF-16 file, and nothing at all after the mark.
+        assert_eq!(comic_info_text(&[0xFF, 0xFE, b'<', 0, b'a']), "<");
+        assert_eq!(comic_info_text(&[0xFF, 0xFE]), "");
+    }
+
+    #[test]
+    fn a_utf16_file_that_declares_its_encoding_parses() {
+        let xml = "<?xml version=\"1.0\" encoding=\"utf-16\"?><ComicInfo><Series>Sixteen</Series></ComicInfo>";
+        let bytes: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain(xml.encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+
+        let info = parse_comic_info_xml(&comic_info_text(&bytes)).unwrap();
+
+        assert_eq!(info.series.as_deref(), Some("Sixteen"));
     }
 }

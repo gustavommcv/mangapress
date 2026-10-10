@@ -6,6 +6,8 @@
 //! `--list-profiles`).
 
 use clap::{Parser, ValueEnum};
+use mangapress_core::pipeline::OutputFormat;
+use mangapress_core::profile::{Family, Profile};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -338,6 +340,35 @@ pub enum MetadataTitle {
     Combine,
     /// Use ComicInfo.xml's Title alone, overriding even an explicit -t.
     TitleOnly,
+}
+
+/// What `--format auto` means for a device: upstream's own defaults, except
+/// that a Kindle gets EPUB where upstream would go on to MOBI (which this
+/// tool doesn't write).
+pub(super) fn automatic_format(profile: &Profile) -> Format {
+    match profile.family() {
+        Family::Kindle if matches!(profile.code, "K1" | "K2" | "K34" | "KDX") => Format::Cbz,
+        Family::Remarkable => Format::Pdf,
+        _ => Format::Epub,
+    }
+}
+
+pub(super) fn format_name(format: Format) -> &'static str {
+    match format {
+        Format::Auto => unreachable!("--format auto is resolved before any format is named"),
+        Format::Epub => "epub",
+        Format::Cbz => "cbz",
+        Format::Pdf => "pdf",
+    }
+}
+
+pub(super) fn pipeline_format(format: Format) -> OutputFormat {
+    match format {
+        Format::Auto => unreachable!("--format auto is resolved before processing configuration"),
+        Format::Epub => OutputFormat::Epub,
+        Format::Cbz => OutputFormat::Cbz,
+        Format::Pdf => OutputFormat::Pdf,
+    }
 }
 
 #[cfg(test)]

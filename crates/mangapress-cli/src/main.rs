@@ -1,358 +1,39 @@
 mod args;
+mod discovery;
 mod output;
+mod processing;
 mod protocol;
+mod reporting;
 
 use anyhow::{bail, Context};
-use args::{Cli, Cropping, Format, InterPanelCrop, MetadataTitle, Splitter};
+use args::{
+    automatic_format, format_name, pipeline_format, Cli, Cropping, Format, InterPanelCrop,
+    MetadataTitle, Splitter,
+};
 use clap::{error::ErrorKind, Parser};
+#[cfg(test)]
+use discovery::COVERS_FOLDER;
+use discovery::{cover_by_convention, read_spread_labels, spread_labels_beside};
 use mangapress_core::archive::read_book;
 use mangapress_core::ebook::{
     cbz_out, cover, epub, group_into_chapters, pdf, spreads, Chapter, Page,
 };
 use mangapress_core::manga::ReadingDirection;
 use mangapress_core::metadata::{self, MetadataTitleMode};
+#[cfg(test)]
+use mangapress_core::pipeline::OutputFormat;
 use mangapress_core::pipeline::{
-    effective_default_jpeg_quality, effective_palette, process_page, CroppingMode, OutputFormat,
-    PipelineOptions, ProcessedPage, SplitterMode,
+    effective_default_jpeg_quality, effective_palette, CroppingMode, PipelineOptions, SplitterMode,
 };
 use mangapress_core::profile::{Family, Profile};
+use processing::process_chapter_pages;
 use protocol::{event_write_failure, EventSink, RunFailure};
-use rayon::prelude::*;
+use reporting::{absolute_display, utc_timestamp, warn, write_human_report};
 use serde_json::json;
 use std::ffi::OsString;
 use std::io::{IsTerminal, Write as _};
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-
-fn absolute_display(path: &Path) -> String {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map(|current| current.join(path))
-            .unwrap_or_else(|_| path.to_path_buf())
-    }
-    .to_string_lossy()
-    .into_owned()
-}
-
-/// `SystemTime` as `YYYY-MM-DDThh:mm:ssZ`, for the EPUB's required
-/// `dcterms:modified`. Hand-rolled (days-since-epoch to a civil date) rather
-/// than pulling in a date-time crate for this one field. A clock set before
-/// 1970 reads as the epoch.
-fn utc_timestamp(now: std::time::SystemTime) -> String {
-    let seconds = now
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or(0);
-    let (days, second_of_day) = (seconds / 86_400, seconds % 86_400);
-
-    // Days since 1970-01-01 to a proleptic Gregorian date, counting in
-    // 400-year eras that start on 1 March so the leap day falls last.
-    let shifted = days + 719_468;
-    let era = shifted / 146_097;
-    let day_of_era = shifted % 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let shifted_month = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
-    let month = if shifted_month < 10 {
-        shifted_month + 3
-    } else {
-        shifted_month - 9
-    };
-    let year = year_of_era + era * 400 + u64::from(month <= 2);
-
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-        second_of_day / 3_600,
-        second_of_day % 3_600 / 60,
-        second_of_day % 60
-    )
-}
-
-/// The spread labels upstream's "Label Spreads" window leaves beside a
-/// source: a file named like the source plus `.json`.
-fn spread_labels_beside(input: &Path) -> Option<PathBuf> {
-    // Rebuilt from its components so that a trailing separator on a folder
-    // doesn't end up in the middle of the name.
-    let mut name = input.components().collect::<PathBuf>().into_os_string();
-    name.push(".json");
-    let path = PathBuf::from(name);
-    path.is_file().then_some(path)
-}
-
-/// The positions in a spread-label file: `{"spreads": [12, 40]}`.
-fn read_spread_labels(path: &Path) -> Result<Vec<usize>, String> {
-    let bytes = mangapress_core::input::read_file(path).map_err(|error| error.to_string())?;
-    let text = String::from_utf8(bytes).map_err(|error| error.to_string())?;
-    let value: serde_json::Value =
-        serde_json::from_str(&text).map_err(|error| error.to_string())?;
-    let positions = value
-        .get("spreads")
-        .and_then(|spreads| spreads.as_array())
-        .ok_or_else(|| "it has no \"spreads\" list".to_string())?;
-    positions
-        .iter()
-        .map(|position| {
-            position
-                .as_u64()
-                .map(|position| position as usize)
-                .ok_or_else(|| format!("{position} is not a page position"))
-        })
-        .collect()
-}
-
-/// One recoverable problem, as a protocol event or a line on the terminal.
-fn warn<W: std::io::Write + Send>(
-    events: &EventSink<W>,
-    code: &str,
-    stage: &str,
-    path: &str,
-    message: &str,
-) -> anyhow::Result<()> {
-    if events.enabled() {
-        events
-            .emit(
-                "warning",
-                json!({
-                    "severity": "warning",
-                    "code": code,
-                    "stage": stage,
-                    "path": path,
-                    "recoverable": true,
-                    "message": message,
-                }),
-            )
-            .map_err(event_write_failure)?;
-    } else {
-        eprintln!("warning: {message}");
-    }
-    Ok(())
-}
-
-/// The folder a book's own cover is looked for in, beside the book.
-const COVERS_FOLDER: &str = "Covers";
-
-/// The cover a `Covers` folder beside `input` holds for it, if any —
-/// upstream's convention for giving each volume of a series its own cover
-/// without naming one on the command line.
-///
-/// Upstream matches by position alone: the folder's Nth image, in natural
-/// order, goes to the Nth book beside it. That is kept, with two changes:
-/// - An image named like the book (`Vol 3.jpg` for `Vol 3.cbz`) is that
-///   book's cover, wherever it sorts. And once any image in the folder is
-///   named after a book, position is not used at all: a book without an
-///   image of its own then has no custom cover, rather than the cover of
-///   whichever book happens to line up with it.
-/// - What counts as "a book beside it" is the input's own kind: files with
-///   its extension, or — for a folder — the other folders, leaving out
-///   `Covers` itself (which upstream counts, giving every folder that sorts
-///   after it the next book's cover). Earlier conversions' output (`_kcc`
-///   in the name, as upstream skips, and this tool's own ` (mangapress`)
-///   doesn't count either.
-fn cover_by_convention(input: &Path) -> Option<PathBuf> {
-    let input = std::path::absolute(input).ok()?;
-    let parent = input.parent()?;
-    let covers_dir = parent.join(COVERS_FOLDER);
-    if !covers_dir.is_dir() {
-        return None;
-    }
-    let names_in = |dir: &Path, keep: &dyn Fn(&Path) -> bool| -> Vec<String> {
-        let mut names: Vec<String> = std::fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| keep(path))
-            .filter_map(|path| Some(path.file_name()?.to_string_lossy().into_owned()))
-            .collect();
-        names.sort_by(|a, b| mangapress_core::natural_sort::compare(a, b));
-        names
-    };
-
-    let covers = names_in(&covers_dir, &|path| {
-        path.is_file() && mangapress_core::archive::has_image_extension(path)
-    });
-
-    let is_folder = input.is_dir();
-    let extension = input.extension().map(|e| e.to_ascii_lowercase());
-    let books = names_in(parent, &|path| {
-        let name = path.file_name().unwrap_or_default().to_string_lossy();
-        if name.contains("_kcc") || name.contains(" (mangapress") {
-            return false;
-        }
-        if is_folder {
-            path.is_dir() && name != COVERS_FOLDER
-        } else {
-            path.is_file() && path.extension().map(|e| e.to_ascii_lowercase()) == extension
-        }
-    });
-
-    // A folder's name is its title whole; a file's, without the extension.
-    let book_title = |name: &str| -> String {
-        if is_folder {
-            name.to_lowercase()
-        } else {
-            Path::new(name)
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_lowercase()
-        }
-    };
-    let cover_title = |name: &str| -> String {
-        Path::new(name)
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_lowercase()
-    };
-
-    let name = input.file_name()?.to_string_lossy().into_owned();
-    let title = book_title(&name);
-    if let Some(cover) = covers.iter().find(|cover| cover_title(cover) == title) {
-        return Some(covers_dir.join(cover));
-    }
-    let named_after_books = covers.iter().any(|cover| {
-        let cover = cover_title(cover);
-        books.iter().any(|book| book_title(book) == cover)
-    });
-    if named_after_books {
-        return None;
-    }
-    let position = books.iter().position(|book| *book == name)?;
-    covers.get(position).map(|cover| covers_dir.join(cover))
-}
-
-/// What `--format auto` means for a device: upstream's own defaults, except
-/// that a Kindle gets EPUB where upstream would go on to MOBI (which this
-/// tool doesn't write).
-fn automatic_format(profile: &Profile) -> Format {
-    match profile.family() {
-        Family::Kindle if matches!(profile.code, "K1" | "K2" | "K34" | "KDX") => Format::Cbz,
-        Family::Remarkable => Format::Pdf,
-        _ => Format::Epub,
-    }
-}
-
-fn format_name(format: Format) -> &'static str {
-    match format {
-        Format::Auto => unreachable!("--format auto is resolved before any format is named"),
-        Format::Epub => "epub",
-        Format::Cbz => "cbz",
-        Format::Pdf => "pdf",
-    }
-}
-
-fn pipeline_format(format: Format) -> OutputFormat {
-    match format {
-        Format::Auto => unreachable!("--format auto is resolved before processing configuration"),
-        Format::Epub => OutputFormat::Epub,
-        Format::Cbz => OutputFormat::Cbz,
-        Format::Pdf => OutputFormat::Pdf,
-    }
-}
-
-/// A human report may stop when its reader closes the pipe; other I/O failures remain errors.
-fn write_human_report<W: std::io::Write>(
-    writer: &mut W,
-    report: impl FnOnce(&mut W) -> std::io::Result<()>,
-) -> std::io::Result<()> {
-    match report(writer).and_then(|()| writer.flush()) {
-        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
-        result => result,
-    }
-}
-
-/// Processes every page of one chapter, fanning the work out across every
-/// core (pages within a chapter don't depend on each other) while
-/// preserving input order in the returned `Vec` regardless of which thread
-/// finishes first -- `par_iter().map().collect()` guarantees this. Kept
-/// directly testable: `on_page_done` is the only way callers observe
-/// progress. Callbacks are serialized in stable source-page order even when
-/// workers finish out of order; both arguments are one-based source-page
-/// positions (not output pages -- one source page can expand into more than
-/// one, via a double-page-spread split).
-#[derive(Debug)]
-struct PageProcessingFailure {
-    page: usize,
-    diagnostic: String,
-}
-
-/// A chapter's source pages, processed.
-#[derive(Debug)]
-struct ProcessedChapter {
-    pages: Vec<Page>,
-    /// The positions (zero-based) of the source pages whose file ended before the image did.
-    truncated_sources: Vec<usize>,
-}
-
-fn process_chapter_pages(
-    pages: &[Page],
-    options: &PipelineOptions,
-    first_chapter: bool,
-    on_page_done: impl Fn(usize, usize) -> std::io::Result<()> + Sync,
-) -> Result<ProcessedChapter, PageProcessingFailure> {
-    let progress = Mutex::new((vec![false; pages.len()], 0usize));
-    let outputs: Vec<Vec<ProcessedPage>> = pages
-        .par_iter()
-        .enumerate()
-        .map(|(page_index, source_page)| {
-            let page_number = page_index + 1;
-            // The book's first page is the one upstream leaves uncropped
-            // when it is a color page (a cover).
-            let is_first_page = first_chapter && page_index == 0;
-            let result =
-                process_page(&source_page.bytes, options, is_first_page).map_err(|error| {
-                    PageProcessingFailure {
-                        page: page_number,
-                        diagnostic: match &source_page.source_path {
-                            Some(path) => format!("image {path:?}: {error}"),
-                            None => error.to_string(),
-                        },
-                    }
-                })?;
-            let mut progress = progress.lock().map_err(|_| PageProcessingFailure {
-                page: page_number,
-                diagnostic: "page progress lock was poisoned".to_string(),
-            })?;
-            progress.0[page_index] = true;
-            while progress.1 < progress.0.len() && progress.0[progress.1] {
-                progress.1 += 1;
-                let completed = progress.1;
-                on_page_done(completed, completed).map_err(|error| PageProcessingFailure {
-                    page: completed,
-                    diagnostic: format!("writing page progress: {error}"),
-                })?;
-            }
-            Ok(result)
-        })
-        .collect::<Result<Vec<_>, PageProcessingFailure>>()?;
-
-    let mut flattened = Vec::with_capacity(pages.len());
-    let mut truncated_sources = Vec::new();
-    for (position, (source, page_outputs)) in pages.iter().zip(outputs).enumerate() {
-        if page_outputs.iter().any(|page| page.source_truncated) {
-            truncated_sources.push(position);
-        }
-        for (piece, page) in page_outputs.into_iter().enumerate() {
-            flattened.push(Page {
-                source_path: source.source_path.clone(),
-                extension: page.extension,
-                bytes: page.bytes,
-                black_background: page.black_background,
-                role: page.role,
-                continues_source_page: piece > 0,
-            });
-        }
-    }
-    Ok(ProcessedChapter {
-        pages: flattened,
-        truncated_sources,
-    })
-}
+#[cfg(test)]
+use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<OsString> = std::env::args_os().collect();

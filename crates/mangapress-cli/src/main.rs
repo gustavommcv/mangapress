@@ -8,13 +8,14 @@ mod planning;
 mod preparation;
 mod processing;
 mod protocol;
+mod publication;
 mod reporting;
 
 use anyhow::Context;
 use args::Cli;
 #[cfg(test)]
 use args::{automatic_format, Format};
-use assembly::{AssembledBook, BookAssets};
+use assembly::BookAssets;
 use clap::{error::ErrorKind, Parser};
 #[cfg(test)]
 use discovery::COVERS_FOLDER;
@@ -29,12 +30,13 @@ use mangapress_core::pipeline::OutputFormat;
 use mangapress_core::pipeline::{CroppingMode, PipelineOptions, SplitterMode};
 #[cfg(test)]
 use mangapress_core::profile::Profile;
-use planning::{BookSummary, Outcome, PlannedOutput};
+use planning::{BookSummary, Outcome};
 use preparation::PreparedPages;
 #[cfg(test)]
 use processing::process_chapter_pages;
 use processing::SourceChapters;
 use protocol::{event_write_failure, EventSink, RunFailure};
+use publication::BookCounts;
 #[cfg(test)]
 use reporting::utc_timestamp;
 use reporting::write_human_report;
@@ -194,11 +196,7 @@ fn run<W: std::io::Write + Send>(
         events,
         failure,
     )?;
-    let AssembledBook {
-        bytes: output_bytes,
-        title,
-        author: result_author,
-    } = assembly::assemble(
+    let assembled = assembly::assemble(
         metadata,
         &processed,
         BookAssets {
@@ -211,80 +209,19 @@ fn run<W: std::io::Write + Send>(
         events,
         failure,
     )?;
-    let PlannedOutput {
-        output_path,
-        output_path_absolute,
-        format,
-        staged_output,
-        extension: _,
-    } = planned;
-    *failure = RunFailure::new(
-        "output_write_failed",
-        "write",
-        true,
-        "Couldn't save the converted book.",
-        format!("writing output to {}", output_path.display()),
+    publication::publish(
+        assembled,
+        planned,
+        &conversion,
+        BookCounts {
+            chapters: total_chapters,
+            source_pages: processed.total_pages,
+            output_pages: processed.page_count,
+        },
+        quiet,
+        events,
+        failure,
     )
-    .with_manga(title.clone())
-    .with_path(output_path_absolute.clone());
-    events
-        .emit(
-            "stage",
-            json!({
-                "stage": "write",
-                "state": "started",
-                "manga": title.clone(),
-                "path": output_path_absolute.clone(),
-            }),
-        )
-        .map_err(event_write_failure)?;
-    staged_output
-        .expect("non-dry-run output was staged before processing")
-        .write(&output_bytes)
-        .with_context(|| format!("writing output to {}", output_path.display()))?;
-    if !quiet {
-        eprintln!(
-            "wrote {} ({} bytes)",
-            output_path.display(),
-            output_bytes.len()
-        );
-    }
-    events
-        .emit(
-            "stage",
-            json!({
-                "stage": "write",
-                "state": "completed",
-                "manga": title.clone(),
-                "path": output_path_absolute.clone(),
-                "bytes": output_bytes.len(),
-            }),
-        )
-        .map_err(event_write_failure)?;
-    events
-        .emit(
-            "result",
-            json!({
-                "status": "completed",
-                "operation": "convert",
-                "dry_run": false,
-                "manga": title,
-                "author": result_author,
-                "format": format,
-                "profile": conversion.profile.code,
-                "width": conversion.width,
-                "height": conversion.height,
-                "chapters": total_chapters,
-                "source_pages": processed.total_pages,
-                "output_pages": processed.page_count,
-                "output_path": output_path_absolute,
-                "bytes": output_bytes.len(),
-                "written": true,
-            }),
-        )
-        .map_err(event_write_failure)?;
-
-    Ok(())
 }
 
 #[cfg(test)]

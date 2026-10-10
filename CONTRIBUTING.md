@@ -42,6 +42,18 @@ which run the actual scripts with native hashing and extraction on their support
 Keep the core usable independently of the CLI. See the [architecture decisions](docs/adr/README.md)
 for the existing boundaries and reasons behind them.
 
+The CLI's `main.rs` coordinates private configuration, inspection, preparation, planning,
+processing, assembly, and publication modules. Filesystem naming and safe writes stay in
+`output`; shared discovery and reporting helpers have their own modules. In the core,
+`ebook/epub/` separates package, navigation, page, spine, and identifier work, while
+`pipeline/` separates cropping, sizing, finishing, and spreads. Tests for these modules
+live beside their code. [ADR 0022](docs/adr/0022-behavior-preserving-module-layout.md)
+records the layout and public boundaries.
+
+Keep pure code moves separate from design or behavior changes. Refactor PRs need evidence
+that existing outputs, CLI behavior, and the machine protocol remain unchanged; a bug fix
+discovered during a refactor belongs in a separate PR.
+
 ## Tests and fixtures
 
 Add regression tests for changed behavior and relevant error cases. Keep fixtures small and

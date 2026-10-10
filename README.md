@@ -139,7 +139,7 @@ whole book. Oversized images are checked before pixel decoding. See
 | Option | What it changes |
 | --- | --- |
 | `--profile CODE` | Target screen and device settings; the default is `KV` (Kindle Voyage). |
-| `--format auto\|epub\|cbz\|pdf` | Output format. `auto` selects CBZ, except PDF for reMarkable and EPUB when `--nested-toc` is given ([ADR 0024](docs/adr/0024-auto-format-is-cbz.md)). |
+| `--format auto\|epub\|cbz\|pdf` | Output format. `auto` selects CBZ for Kindle, PDF for reMarkable and EPUB for the others, and EPUB whenever `--nested-toc` is given ([ADR 0024](docs/adr/0024-auto-format-is-cbz.md)). |
 | `--manga-style` | Right-to-left reading and the order of split spreads. |
 | `--cropping MODE` | `disabled`, `margins`, or `margins-and-page-numbers` (the default). |
 | `--splitter MODE` | Split spreads into halves, rotate them, or keep both versions: `split` (default), `rotate`, or `both`. |

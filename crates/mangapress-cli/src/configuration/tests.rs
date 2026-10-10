@@ -56,7 +56,7 @@ fn automatic_format_is_resolved_before_the_processing_target() {
     for (code, format, processing_format, target) in [
         ("KDX", Format::Cbz, OutputFormat::Cbz, (824, 1200)),
         ("K11", Format::Cbz, OutputFormat::Cbz, (1072, 1448)),
-        ("KoC", Format::Cbz, OutputFormat::Cbz, (1072, 1448)),
+        ("KoC", Format::Epub, OutputFormat::Epub, (1072, 1448)),
         ("KS3", Format::Cbz, OutputFormat::Cbz, (1986, 2648)),
         ("Rmk2", Format::Pdf, OutputFormat::Pdf, (1404, 1872)),
     ] {

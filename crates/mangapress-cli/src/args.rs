@@ -254,8 +254,8 @@ pub struct Cli {
     #[arg(long, help_heading = "Image quality")]
     pub eraserainbow: bool,
 
-    /// Output format. `auto` picks CBZ, except PDF for reMarkable and EPUB
-    /// when `--nested-toc` is given.
+    /// Output format. `auto` picks CBZ for Kindle, PDF for reMarkable and
+    /// EPUB for everything else, and EPUB whenever `--nested-toc` is given.
     #[arg(short, long, value_enum, default_value_t = Format::Auto, help_heading = "Conversion", display_order = 1)]
     pub format: Format,
 
@@ -342,14 +342,15 @@ pub enum MetadataTitle {
     TitleOnly,
 }
 
-/// What `--format auto` means for a device: PDF for the reMarkable, whose own
-/// reader is built for it, and CBZ for every other profile (ADR 0024). Upstream
-/// writes CBZ only for the four oldest Kindles and goes on to MOBI for the
-/// others, which this tool doesn't write.
+/// What `--format auto` means for a device (ADR 0024): CBZ for every Kindle, PDF
+/// for the reMarkable, whose own reader is built for it, and EPUB for the rest.
+/// Upstream writes CBZ only for the four oldest Kindles and goes on to MOBI for
+/// the others, which this tool doesn't write.
 pub(super) fn automatic_format(profile: &Profile) -> Format {
     match profile.family() {
+        Family::Kindle => Format::Cbz,
         Family::Remarkable => Format::Pdf,
-        _ => Format::Cbz,
+        Family::Kobo | Family::Other => Format::Epub,
     }
 }
 

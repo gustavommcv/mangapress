@@ -109,30 +109,14 @@ fn dry_run_reports_resolved_book_and_plan_without_creating_parents_or_staging() 
 #[test]
 fn output_extension_and_protocol_format_remain_distinct_for_kobo_and_other_modes() {
     for (flags, extension, format) in [
+        (vec!["--profile", "KoC"], "kepub.epub", "epub"),
+        (vec!["--profile", "KoC", "--nokepub"], "epub", "epub"),
         (
-            vec!["--profile", "KoC", "--format", "epub"],
-            "kepub.epub",
-            "epub",
-        ),
-        (
-            vec!["--profile", "KoC", "--format", "epub", "--nokepub"],
-            "epub",
-            "epub",
-        ),
-        (
-            vec![
-                "--profile",
-                "KoC",
-                "--format",
-                "epub",
-                "--customwidth",
-                "700",
-            ],
+            vec!["--profile", "KoC", "--customwidth", "700"],
             "epub",
             "epub",
         ),
         (vec!["--profile", "KoC", "--format", "cbz"], "cbz", "cbz"),
-        (vec!["--profile", "KoC"], "cbz", "cbz"),
         (vec!["--profile", "K11", "--format", "epub"], "epub", "epub"),
         (vec!["--profile", "KDX"], "cbz", "cbz"),
     ] {

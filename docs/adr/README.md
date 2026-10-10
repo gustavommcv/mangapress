@@ -22,4 +22,4 @@
 20. [Follow KCC on the differences that ADR 0019 left open](0020-follow-kcc-on-the-differences-left-open.md) — closes the open table of 19
 21. [Write JPEG pages the way libjpeg does, and PNG pages with the strongest compression](0021-write-jpeg-pages-as-libjpeg-does.md) — adds the `jpeg-encoder` dependency
 22. [Keep module refactors separate from behavior changes](0022-behavior-preserving-module-layout.md)
-24. [`--format auto` gives CBZ, and PDF only for reMarkable](0024-auto-format-is-cbz.md) — replaces a row of 13
+24. [`--format auto` gives CBZ for every Kindle](0024-auto-format-is-cbz.md) — replaces a row of 13

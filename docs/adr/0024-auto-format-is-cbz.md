@@ -1,4 +1,4 @@
-# 24. `--format auto` gives CBZ, and PDF only for reMarkable
+# 24. `--format auto` gives CBZ for every Kindle
 
 Date: 2026-10-10
 
@@ -28,46 +28,49 @@ the findings that bear on this tool are:
   keeps its own margins and status bar around the image, so a page is drawn smaller than the screen:
   1002x1354 of 1072x1448 with its default settings, measured in KOReader's own engine
   ([ADR 0023](0023-no-line-height-around-a-page-image.md) gets 12 px of that back, not the rest). A
-  CBZ page has no margins, and this tool pads it to the device's screen.
+  CBZ page has no margins.
 - **An EPUB has no way to fill the width in KOReader.** There is no fit-to-width zoom for one; a CBZ
   has it.
 
 What EPUB still has that a CBZ written by this tool does not: a table of contents with one entry per
 chapter, an author inside the file, and the two-level table of contents of `--nested-toc` (ADR 0012).
 
+All of this was measured on a Kindle. Nothing was measured on a Kobo, whose own reader is built
+around EPUB (KEPUB), and the reMarkable's own reader is built around PDF.
+
 Mangabound already starts on CBZ and passes `--format` on every run, so it is not affected by the
 default. A person at a terminal who leaves `--format` out is.
 
 ## Decision
 
-- **`--format auto` gives PDF for the reMarkable profiles and CBZ for every other profile.**
-  `--format epub`, `--format cbz` and `--format pdf` are unchanged.
+- **`--format auto` gives CBZ for every Kindle profile, PDF for the reMarkable profiles, and EPUB
+  for the rest** (the Kobo profiles and `OTHER`, as before). `--format epub`, `--format cbz` and
+  `--format pdf` are unchanged.
 - **`--nested-toc` keeps working without `--format`.** A two-level table of contents exists only in
   EPUB (ADR 0012), so with `--nested-toc` and `--format auto` the format is EPUB, on every profile.
   Until now the four oldest Kindles and the reMarkable were refused here, because their automatic
   format was not an EPUB. `--nested-toc` with an explicit `--format cbz` or `--format pdf` is still
   refused.
 - **The row of ADR 0013's table for `--format auto` is replaced by this one.** The difference from
-  KCC is now: KCC writes MOBI for the other Kindle profiles and EPUB for the rest; this tool writes
-  CBZ.
+  KCC is now: KCC writes MOBI for the Kindles after the four oldest; this tool writes CBZ for all of
+  them. Kobo, reMarkable and `OTHER` are as before.
 
 ## Alternatives considered
 
-- **CBZ for Kindle profiles only, EPUB for Kobo and the rest.** Nothing in the reasons above is
-  specific to a Kindle: KOReader also runs on Kobo, and a Kobo's own reader opens CBZ (not tested
-  here). A rule with an exception for each brand is also harder to say than one with a single
-  exception, the reMarkable, whose PDF is the format its own reader is built for.
+- **CBZ for every profile but the reMarkable.** The reasons above are about KOReader, which also
+  runs on Kobo. But a Kobo's stock reader opens EPUB, which it calls KEPUB, and nobody measured a
+  CBZ there. The default should not move for a device whose reasons were not checked.
 - **Leave `auto` as it is, and only tell people to pass `--format cbz`.** The default is what
-  someone who has not read the documentation gets, and for the reader this tool is written for the
-  default is the worse choice.
+  someone who has not read the documentation gets, and for a Kindle, the device this tool is
+  written for, the default was the worse choice.
 
 ## Consequences
 
-- A command line without `--format` writes a CBZ for most profiles, where it wrote an EPUB. The
-  book has no chapter navigation and no author inside it; `--format epub` brings both back. This is
-  a change of default in a 0.x tool, and the release notes of the first release that carries it say
-  so.
+- A command line for a Kindle profile without `--format` writes a CBZ for all of them, where it
+  wrote an EPUB for every Kindle but the four oldest. The book has no chapter navigation and no
+  author inside it; `--format epub` brings both back. This is a change of default in a 0.x tool,
+  and the release notes of the first release that carries it say so.
 - The help text, the README and `tools/parity/coverage.md` say what `auto` means now. The parity
   comparisons name their format on every run, so they are not affected.
-- If measuring a CBZ on the device ever gives a reason to prefer EPUB again, this record is where
-  the default is changed back.
+- If a CBZ is measured on a Kobo and found better, or measured on a Kindle and found worse, this
+  record is where the default is changed.

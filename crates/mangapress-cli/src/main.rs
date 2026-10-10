@@ -1,6 +1,7 @@
 mod args;
 mod configuration;
 mod discovery;
+mod inspection;
 mod output;
 mod processing;
 mod protocol;
@@ -9,18 +10,17 @@ mod reporting;
 use anyhow::{bail, Context};
 #[cfg(test)]
 use args::automatic_format;
-use args::{format_name, Cli, Format, MetadataTitle};
+use args::{format_name, Cli, Format};
 use clap::{error::ErrorKind, Parser};
 use configuration::ResolvedConversion;
 #[cfg(test)]
 use discovery::COVERS_FOLDER;
 use discovery::{cover_by_convention, read_spread_labels, spread_labels_beside};
-use mangapress_core::archive::read_book;
+use inspection::{InputMetadata, ReadInput};
 use mangapress_core::ebook::{
     cbz_out, cover, epub, group_into_chapters, pdf, spreads, Chapter, Page,
 };
 use mangapress_core::manga::ReadingDirection;
-use mangapress_core::metadata::{self, MetadataTitleMode};
 #[cfg(test)]
 use mangapress_core::pipeline::OutputFormat;
 use mangapress_core::pipeline::{effective_default_jpeg_quality, effective_palette};
@@ -148,6 +148,17 @@ fn run<W: std::io::Write + Send>(
         return Ok(());
     }
     let quiet = cli.quiet || events.enabled();
+    let conversion = configuration::resolve(cli, failure)?;
+    let ReadInput {
+        book_input,
+        metadata:
+            InputMetadata {
+                resolved,
+                author,
+                comic_info,
+                comic_info_xml,
+            },
+    } = inspection::read(&conversion, quiet, events, failure)?;
     let ResolvedConversion {
         cli,
         input,
@@ -156,144 +167,10 @@ fn run<W: std::io::Write + Send>(
         width,
         height,
         output_format,
-    } = configuration::resolve(cli, failure)?;
+    } = conversion;
 
-    let fallback_title = input
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "Untitled".to_string());
-
-    events
-        .emit(
-            "stage",
-            json!({
-                "stage": "inspect",
-                "state": "started",
-                "path": input_path.clone(),
-            }),
-        )
-        .map_err(event_write_failure)?;
-
-    if !quiet {
-        eprintln!(
-            "mangapress: converting '{}' for {} ({width}x{height}, {} gray levels), manga_style={}, format={:?}",
-            input.display(),
-            profile.display_name,
-            effective_palette(profile, cli.customwidth, cli.customheight).levels(),
-            cli.manga_style,
-            cli.format,
-        );
-    }
-
-    *failure = RunFailure::new(
-        "input_read_failed",
-        "inspect",
-        true,
-        "Couldn't read pages from the input.",
-        format!("reading input from {}", input.display()),
-    )
-    .with_path(input_path.clone());
-    let book_input =
-        read_book(&input).with_context(|| format!("reading input from {}", input.display()))?;
-    for link in &book_input.skipped_links {
-        let path = absolute_display(&input.join(&link.relative_path));
-        let message = format!("Skipped a symbolic link because {}.", link.reason);
-        if events.enabled() {
-            events
-                .emit(
-                    "warning",
-                    json!({
-                        "severity": "warning",
-                        "code": "link_skipped",
-                        "stage": "inspect",
-                        "path": path,
-                        "recoverable": true,
-                        "message": message,
-                    }),
-                )
-                .map_err(event_write_failure)?;
-        } else {
-            eprintln!("warning: {message} Link: {path:?}");
-        }
-    }
-    let mut source_entries = book_input.entries;
-
-    if source_entries.is_empty()
-        && book_input.skipped_non_images == 0
-        && book_input.skipped_links.is_empty()
-    {
-        *failure = RunFailure::new(
-            "input_empty",
-            "inspect",
-            true,
-            "The input contains no files.",
-            format!("no files found in {}", input.display()),
-        )
-        .with_path(input_path.clone());
-        bail!("no files found in {}", input.display());
-    }
-
-    events
-        .emit(
-            "stage",
-            json!({
-                "stage": "metadata",
-                "state": "started",
-                "path": input_path.clone(),
-            }),
-        )
-        .map_err(event_write_failure)?;
-    let comic_info_xml = metadata::extract_comic_info_entry(&mut source_entries);
-    // A ComicInfo.xml that cannot be read is no reason to refuse the book: it is made without
-    // that metadata, and the person is told, as upstream does.
-    let comic_info = match comic_info_xml.as_deref() {
-        Some(bytes) => match metadata::parse_comic_info_xml(&metadata::comic_info_text(bytes)) {
-            Ok(info) => Some(info),
-            Err(reason) => {
-                warn(
-                    events,
-                    "comic_info_unreadable",
-                    "metadata",
-                    &input_path,
-                    &format!(
-                        "ComicInfo.xml could not be read and was ignored; the book is made without it ({reason})."
-                    ),
-                )?;
-                None
-            }
-        },
-        None => None,
-    };
-    if comic_info.is_some() && !quiet {
-        eprintln!("found ComicInfo.xml");
-    }
-
-    let resolved = metadata::resolve(
-        comic_info.as_ref(),
-        cli.title.as_deref(),
-        cli.author.as_deref(),
-        &fallback_title,
-        match cli.metadatatitle {
-            MetadataTitle::SeriesOnly => MetadataTitleMode::SeriesOnly,
-            MetadataTitle::Combine => MetadataTitleMode::Combine,
-            MetadataTitle::TitleOnly => MetadataTitleMode::TitleOnly,
-        },
-    );
     let title = resolved.title;
-    let author = resolved.authors.join(", ");
-    events
-        .emit(
-            "stage",
-            json!({
-                "stage": "metadata",
-                "state": "completed",
-                "manga": title.clone(),
-                "title": title.clone(),
-                "author": author.clone(),
-                "comic_info_found": comic_info.is_some(),
-            }),
-        )
-        .map_err(event_write_failure)?;
+    let source_entries = book_input.entries;
 
     let (source_entries, skipped_non_images) =
         mangapress_core::archive::filter_image_entries(source_entries);

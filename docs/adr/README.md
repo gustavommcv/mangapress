@@ -12,7 +12,7 @@
 10. ~~[Defer color (`--forcecolor`) output](0010-color-output-deferred.md)~~ — superseded: color output is implemented
 11. [Add a versioned JSON Lines event stream](0011-versioned-json-lines-events.md)
 12. [A two-level table of contents for a combined series, EPUB only](0012-nested-toc-for-combined-volumes.md)
-13. [Follow a named KCC release exactly, and leave out what exists only for Amazon's converter](0013-follow-a-named-kcc-release.md)
+13. [Follow a named KCC release exactly, and leave out what exists only for Amazon's converter](0013-follow-a-named-kcc-release.md) — `--format auto` row replaced by 24
 14. [Defer WebP output, and smaller JPEG](0014-webp-output-deferred.md)
 15. [Bound input reads and check image dimensions before decoding](0015-bounded-input-reads.md)
 16. [Follow KCC's non-overwriting output names and stage completed writes](0016-safe-output-planning-and-publication.md)
@@ -22,3 +22,4 @@
 20. [Follow KCC on the differences that ADR 0019 left open](0020-follow-kcc-on-the-differences-left-open.md) — closes the open table of 19
 21. [Write JPEG pages the way libjpeg does, and PNG pages with the strongest compression](0021-write-jpeg-pages-as-libjpeg-does.md) — adds the `jpeg-encoder` dependency
 22. [Keep module refactors separate from behavior changes](0022-behavior-preserving-module-layout.md)
+24. [`--format auto` gives CBZ, and PDF only for reMarkable](0024-auto-format-is-cbz.md) — replaces a row of 13

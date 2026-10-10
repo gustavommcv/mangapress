@@ -50,13 +50,11 @@ fn human_reports_ignore_only_broken_pipe_including_flush_failures() {
 #[test]
 fn automatic_format_follows_the_device_family() {
     let format = |code: &str| automatic_format(Profile::by_code(code).unwrap());
-    for code in ["K1", "K2", "K34", "KDX"] {
+    for code in ["K1", "K2", "K34", "KDX", "K11", "KS3", "KoC", "OTHER"] {
         assert_eq!(format(code), Format::Cbz, "{code}");
     }
-    assert_eq!(format("K11"), Format::Epub);
-    assert_eq!(format("KoC"), Format::Epub);
+    assert_eq!(format("Rmk1"), Format::Pdf);
     assert_eq!(format("Rmk2"), Format::Pdf);
-    assert_eq!(format("OTHER"), Format::Epub);
 }
 
 #[test]

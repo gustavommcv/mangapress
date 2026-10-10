@@ -64,7 +64,13 @@ pub(super) fn resolve(cli: Cli, failure: &mut RunFailure) -> anyhow::Result<Reso
 
     let mut cli = cli;
     if cli.format == Format::Auto {
-        cli.format = automatic_format(profile);
+        // Only an EPUB has a two-level table of contents (ADR 0012), so asking for one is
+        // asking for an EPUB.
+        cli.format = if cli.nested_toc {
+            Format::Epub
+        } else {
+            automatic_format(profile)
+        };
     }
     let cli = cli;
     let output_format = pipeline_format(cli.format);

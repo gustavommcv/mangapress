@@ -143,10 +143,17 @@ fn scribe_epub_plan_pages_and_metadata_agree_on_the_width_cap() {
     write_png(&fixture.path().join("page.png"), 96);
     for profile in ["KS3", "KSCS"] {
         for (args, expected, kindle_metadata) in [
-            (vec![], (1920, 2648), true),
             (vec!["--format", "epub"], (1920, 2648), true),
-            (vec!["--customwidth", "1986"], (1986, 2648), false),
-            (vec!["--customheight", "2648"], (1986, 2648), false),
+            (
+                vec!["--format", "epub", "--customwidth", "1986"],
+                (1986, 2648),
+                false,
+            ),
+            (
+                vec!["--format", "epub", "--customheight", "2648"],
+                (1986, 2648),
+                false,
+            ),
         ] {
             let output_dir = tempfile::tempdir().unwrap();
             let destination = output_dir.path().join("book.epub");

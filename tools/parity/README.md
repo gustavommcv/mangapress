@@ -124,6 +124,8 @@ option resolver, including the Scribe width cap. The exact dither check still
 exercises all three palettes (`K11`, `K2`, `K1`), independently of the selected device.
 
 Books exercise selected EPUB/CBZ behavior, not every markup attribute or every option pairing.
+The XHTML of a page is pinned by Rust tests, not compared with KCC's: it has one stylesheet rule more than KCC's
+([ADR 0023](../../docs/adr/0023-no-line-height-around-a-page-image.md)).
 The generated books above are single-chapter folders. A 16-bit gray PNG
 and AVIF or JPEG 2000 pages are left out of them because the tools differ there. Pages cut short have their
 own books (a PNG, a palette PNG, an interlaced PNG and a GIF); a JPEG cut short is read by both tools, and

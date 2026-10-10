@@ -22,3 +22,4 @@
 20. [Follow KCC on the differences that ADR 0019 left open](0020-follow-kcc-on-the-differences-left-open.md) — closes the open table of 19
 21. [Write JPEG pages the way libjpeg does, and PNG pages with the strongest compression](0021-write-jpeg-pages-as-libjpeg-does.md) — adds the `jpeg-encoder` dependency
 22. [Keep module refactors separate from behavior changes](0022-behavior-preserving-module-layout.md)
+23. [Give a page's wrapper no line height, so KOReader does not draw the page 12 px short](0023-no-line-height-around-a-page-image.md) — narrow exception to 13

@@ -1,4 +1,5 @@
 mod args;
+mod assembly;
 mod configuration;
 mod discovery;
 mod inspection;
@@ -9,36 +10,34 @@ mod processing;
 mod protocol;
 mod reporting;
 
-use anyhow::{bail, Context};
+use anyhow::Context;
+use args::Cli;
 #[cfg(test)]
-use args::automatic_format;
-use args::{Cli, Format};
+use args::{automatic_format, Format};
+use assembly::{AssembledBook, BookAssets};
 use clap::{error::ErrorKind, Parser};
-use configuration::ResolvedConversion;
 #[cfg(test)]
 use discovery::COVERS_FOLDER;
 #[cfg(test)]
 use discovery::{cover_by_convention, read_spread_labels, spread_labels_beside};
-use inspection::{InputMetadata, ReadInput};
+use inspection::ReadInput;
 #[cfg(test)]
 use mangapress_core::ebook::Page;
-use mangapress_core::ebook::{cbz_out, cover, epub, pdf};
-use mangapress_core::manga::ReadingDirection;
-use mangapress_core::pipeline::effective_default_jpeg_quality;
 #[cfg(test)]
 use mangapress_core::pipeline::OutputFormat;
 #[cfg(test)]
 use mangapress_core::pipeline::{CroppingMode, PipelineOptions, SplitterMode};
-use mangapress_core::profile::Family;
 #[cfg(test)]
 use mangapress_core::profile::Profile;
 use planning::{BookSummary, Outcome, PlannedOutput};
 use preparation::PreparedPages;
 #[cfg(test)]
 use processing::process_chapter_pages;
-use processing::{ProcessedBook, SourceChapters};
+use processing::SourceChapters;
 use protocol::{event_write_failure, EventSink, RunFailure};
-use reporting::{utc_timestamp, write_human_report};
+#[cfg(test)]
+use reporting::utc_timestamp;
+use reporting::write_human_report;
 use serde_json::json;
 use std::ffi::OsString;
 use std::io::Write as _;
@@ -158,15 +157,9 @@ fn run<W: std::io::Write + Send>(
     let conversion = configuration::resolve(cli, failure)?;
     let ReadInput {
         book_input,
-        metadata:
-            InputMetadata {
-                resolved,
-                author,
-                comic_info,
-                comic_info_xml,
-            },
+        metadata,
     } = inspection::read(&conversion, quiet, events, failure)?;
-    let title = resolved.title;
+    let title = metadata.resolved.title.as_str();
     let PreparedPages {
         source_chapters,
         total_chapters,
@@ -174,18 +167,12 @@ fn run<W: std::io::Write + Send>(
         custom_cover,
         cover_source,
         joined_spreads,
-    } = preparation::prepare(book_input, &conversion, &title, quiet, events, failure)?;
-    let Outcome::Convert(PlannedOutput {
-        output_path,
-        output_path_absolute,
-        format,
-        extension,
-        staged_output,
-    }) = planning::prepare(
+    } = preparation::prepare(book_input, &conversion, title, quiet, events, failure)?;
+    let Outcome::Convert(planned) = planning::prepare(
         &conversion,
         &BookSummary {
-            title: &title,
-            author: &author,
+            title,
+            author: &metadata.author,
             chapters: total_chapters,
             pages: total_pages,
         },
@@ -195,167 +182,42 @@ fn run<W: std::io::Write + Send>(
     else {
         return Ok(());
     };
-    let ProcessedBook {
-        chapters: processed_chapters,
-        total_pages,
-        page_count,
-        pipeline_options,
-    } = processing::process_book(
+    let processed = processing::process_book(
         SourceChapters {
             chapters: source_chapters,
             total_chapters,
             total_pages,
         },
         &conversion,
-        &title,
+        title,
         quiet,
         events,
         failure,
     )?;
-    let ResolvedConversion {
-        cli,
-        input: _,
-        input_path: _,
-        profile,
-        width,
-        height,
-        output_format: _,
-    } = conversion;
-    events
-        .emit(
-            "stage",
-            json!({
-                "stage": "package",
-                "state": "started",
-                "manga": title.clone(),
-                "format": format,
-            }),
-        )
-        .map_err(event_write_failure)?;
-    *failure = RunFailure::new(
-        "book_build_failed",
-        "package",
-        false,
-        format!(
-            "Couldn't assemble the {} book.",
-            extension.to_ascii_uppercase()
-        ),
-        format!("building {extension} output"),
-    )
-    .with_manga(title.clone())
-    .with_path(output_path_absolute.clone());
-    let result_author = author.clone();
-    // The cover, and whether upstream would also put it in a CBZ: only when
-    // it is not simply the first page (the user's own, or smart-cropped).
-    let cover: Option<(Vec<u8>, bool)> = match cover_source.as_deref() {
-        Some(source) if cli.format != Format::Pdf => {
-            match cover::build_cover_reporting(
-                source,
-                &cover::CoverOptions {
-                    target: pipeline_options.target_resolution(),
-                    right_to_left: cli.manga_style && !cli.webtoon,
-                    smart_crop: cli.smartcovercrop,
-                    fill: cli.coverfill,
-                    force_color: cli.forcecolor,
-                    jpeg_quality: cli.jpeg_quality.unwrap_or_else(|| {
-                        effective_default_jpeg_quality(profile, cli.customwidth, cli.customheight)
-                    }),
-                },
-            ) {
-                Ok(cover) => Some(cover),
-                Err(error) => {
-                    *failure = RunFailure::new(
-                        "cover_build_failed",
-                        "package",
-                        true,
-                        "Couldn't make the cover from that image.",
-                        format!("building the cover: {error}"),
-                    )
-                    .with_manga(title.clone());
-                    bail!("building the cover: {error}");
-                }
-            }
-        }
-        _ => None,
-    };
-
-    let output_result = match cli.format {
-        Format::Auto => unreachable!("--format auto was resolved above"),
-        Format::Epub => epub::build_epub(
-            &processed_chapters,
-            &epub::EpubOptions {
-                title: title.clone(),
-                authors: resolved.authors,
-                language: cli.language.clone(),
-                reading_direction: ReadingDirection {
-                    right_to_left: cli.manga_style && !cli.webtoon,
-                },
-                description: resolved.summary,
-                nested_toc: cli.nested_toc,
-                kindle: profile.family() == Family::Kindle,
-                // Upstream's Kindle fixed-layout block is for a Kindle
-                // profile at its format-specific target; overriding either
-                // dimension makes it upstream's "Custom" profile, which
-                // gets none.
-                kindle_resolution: (profile.family() == Family::Kindle
-                    && cli.customwidth.unwrap_or(0) == 0
-                    && cli.customheight.unwrap_or(0) == 0)
-                    .then_some((width, height)),
-                invert_direction: cli.invertdirection,
-                spread_shift: cli.spreadshift,
-                one_page_landscape: cli.onepagelandscape,
-                cover: cover.as_ref().map(|(bytes, _)| bytes.clone()),
-                // A bookmark counts source pages; joining spreads moved
-                // the ones after each pair up by one.
-                bookmarks: comic_info
-                    .as_ref()
-                    .map(|info| {
-                        info.bookmarks
-                            .iter()
-                            .map(|(page, title)| {
-                                let page = joined_spreads.position_after(*page as usize);
-                                (page as u32, title.clone())
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                series: resolved.series.map(|name| (name, resolved.series_position)),
-                modified: utc_timestamp(std::time::SystemTime::now()),
-            },
-        )?,
-        Format::Cbz => {
-            let keep_xml = cli
-                .keepcomicinfo
-                .then_some(comic_info_xml.as_deref())
-                .flatten();
-            let cbz_cover = cover
-                .as_ref()
-                .filter(|(_, smart_cropped)| custom_cover.is_some() || *smart_cropped)
-                .map(|(bytes, _)| bytes.as_slice());
-            cbz_out::build_cbz(&processed_chapters, keep_xml, cbz_cover)?
-        }
-        Format::Pdf => pdf::build_pdf(
-            &processed_chapters,
-            &pdf::PdfOptions {
-                title: title.clone(),
-                author: author.clone(),
-            },
-        )?,
-    };
-    let output_bytes = output_result;
-    events
-        .emit(
-            "stage",
-            json!({
-                "stage": "package",
-                "state": "completed",
-                "manga": title.clone(),
-                "format": format,
-                "bytes": output_bytes.len(),
-            }),
-        )
-        .map_err(event_write_failure)?;
-
+    let AssembledBook {
+        bytes: output_bytes,
+        title,
+        author: result_author,
+    } = assembly::assemble(
+        metadata,
+        &processed,
+        BookAssets {
+            cover_source: cover_source.as_deref(),
+            custom_cover: custom_cover.is_some(),
+            joined_spreads: &joined_spreads,
+        },
+        &conversion,
+        &planned,
+        events,
+        failure,
+    )?;
+    let PlannedOutput {
+        output_path,
+        output_path_absolute,
+        format,
+        staged_output,
+        extension: _,
+    } = planned;
     *failure = RunFailure::new(
         "output_write_failed",
         "write",
@@ -409,12 +271,12 @@ fn run<W: std::io::Write + Send>(
                 "manga": title,
                 "author": result_author,
                 "format": format,
-                "profile": profile.code,
-                "width": width,
-                "height": height,
+                "profile": conversion.profile.code,
+                "width": conversion.width,
+                "height": conversion.height,
                 "chapters": total_chapters,
-                "source_pages": total_pages,
-                "output_pages": page_count,
+                "source_pages": processed.total_pages,
+                "output_pages": processed.page_count,
                 "output_path": output_path_absolute,
                 "bytes": output_bytes.len(),
                 "written": true,

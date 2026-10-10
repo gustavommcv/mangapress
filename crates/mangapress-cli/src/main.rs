@@ -3,6 +3,7 @@ mod configuration;
 mod discovery;
 mod inspection;
 mod output;
+mod planning;
 mod preparation;
 mod processing;
 mod protocol;
@@ -11,7 +12,7 @@ mod reporting;
 use anyhow::{bail, Context};
 #[cfg(test)]
 use args::automatic_format;
-use args::{format_name, Cli, Format};
+use args::{Cli, Format};
 use clap::{error::ErrorKind, Parser};
 use configuration::ResolvedConversion;
 #[cfg(test)]
@@ -21,18 +22,19 @@ use discovery::{cover_by_convention, read_spread_labels, spread_labels_beside};
 use inspection::{InputMetadata, ReadInput};
 use mangapress_core::ebook::{cbz_out, cover, epub, pdf, Chapter, Page};
 use mangapress_core::manga::ReadingDirection;
+use mangapress_core::pipeline::effective_default_jpeg_quality;
 #[cfg(test)]
 use mangapress_core::pipeline::OutputFormat;
-use mangapress_core::pipeline::{effective_default_jpeg_quality, effective_palette};
 #[cfg(test)]
 use mangapress_core::pipeline::{CroppingMode, PipelineOptions, SplitterMode};
 use mangapress_core::profile::Family;
 #[cfg(test)]
 use mangapress_core::profile::Profile;
+use planning::{BookSummary, Outcome, PlannedOutput};
 use preparation::PreparedPages;
 use processing::process_chapter_pages;
 use protocol::{event_write_failure, EventSink, RunFailure};
-use reporting::{absolute_display, utc_timestamp, write_human_report};
+use reporting::{utc_timestamp, write_human_report};
 use serde_json::json;
 use std::ffi::OsString;
 use std::io::{IsTerminal, Write as _};
@@ -169,9 +171,29 @@ fn run<W: std::io::Write + Send>(
         cover_source,
         joined_spreads,
     } = preparation::prepare(book_input, &conversion, &title, quiet, events, failure)?;
+    let Outcome::Convert(PlannedOutput {
+        output_path,
+        output_path_absolute,
+        format,
+        extension,
+        staged_output,
+    }) = planning::prepare(
+        &conversion,
+        &BookSummary {
+            title: &title,
+            author: &author,
+            chapters: total_chapters,
+            pages: total_pages,
+        },
+        events,
+        failure,
+    )?
+    else {
+        return Ok(());
+    };
     let ResolvedConversion {
         cli,
-        input,
+        input: _,
         input_path,
         profile,
         width,
@@ -179,160 +201,6 @@ fn run<W: std::io::Write + Send>(
         output_format,
     } = conversion;
     let device = (width, height);
-
-    events
-        .emit(
-            "stage",
-            json!({
-                "stage": "plan",
-                "state": "started",
-                "manga": title.clone(),
-            }),
-        )
-        .map_err(event_write_failure)?;
-    // A Kobo profile's EPUB is a "kepub" by name, as upstream names it —
-    // unless asked not to, or the resolution is custom (upstream no longer
-    // sees a Kobo profile then).
-    let kepub = cli.format == Format::Epub
-        && profile.family() == Family::Kobo
-        && !cli.nokepub
-        && cli.customwidth.unwrap_or(0) == 0
-        && cli.customheight.unwrap_or(0) == 0;
-    // What the events call the format is the format itself. The file's
-    // extension is a different thing for a kepub, and reporting it as the
-    // format ("kepub.epub") is not a value the protocol has.
-    let format = format_name(cli.format);
-    let extension = if kepub { "kepub.epub" } else { format };
-    *failure = RunFailure::new(
-        "output_plan_failed",
-        "plan",
-        true,
-        "Couldn't prepare the output destination. Check its path and permissions.",
-        "planning the output destination",
-    )
-    .with_manga(title.clone())
-    .with_path(absolute_display(cli.output.as_deref().unwrap_or(&input)));
-    let output_plan = output::plan(&input, cli.output.as_deref(), extension, kepub)
-        .context("planning the output destination")?;
-    let output_path = output_plan.path;
-    if output_plan.collision {
-        let (code, message) = if output_plan.input_collision {
-            ("output_collision", "The requested output would overwrite the input, so a safe alternate filename will be used.")
-        } else {
-            (
-                "output_exists",
-                "The requested output already exists, so a safe alternate filename will be used.",
-            )
-        };
-        if events.enabled() {
-            events
-                .emit(
-                    "warning",
-                    json!({
-                        "severity": "warning",
-                        "code": code,
-                        "stage": "plan",
-                        "manga": title.clone(),
-                        "path": absolute_display(&output_path),
-                        "recoverable": true,
-                        "message": message,
-                    }),
-                )
-                .map_err(event_write_failure)?;
-        } else {
-            eprintln!("warning: {message} Writing to {}", output_path.display());
-        }
-    }
-    let output_path_absolute = absolute_display(&output_path);
-    let staged_output = if cli.dry_run {
-        None
-    } else {
-        let directory = output::parent(&output_path)?;
-        *failure = RunFailure::new(
-            "output_directory_create_failed",
-            "write",
-            true,
-            "Couldn't create the selected output folder.",
-            format!("creating output directory {}", directory.display()),
-        )
-        .with_manga(title.clone())
-        .with_path(absolute_display(directory));
-        std::fs::create_dir_all(directory)
-            .with_context(|| format!("creating output directory {}", directory.display()))?;
-        *failure = RunFailure::new(
-            "output_plan_failed",
-            "plan",
-            true,
-            "Couldn't prepare the output destination. Check its path and permissions.",
-            format!("staging output beside {}", output_path.display()),
-        )
-        .with_manga(title.clone())
-        .with_path(output_path_absolute.clone());
-        Some(output::StagedOutput::new(&output_path).context("staging the output file")?)
-    };
-    events
-        .emit(
-            "stage",
-            json!({
-                "stage": "plan",
-                "state": "completed",
-                "manga": title.clone(),
-                "output_path": output_path_absolute.clone(),
-                "format": format,
-                "profile": profile.code,
-                "device": profile.display_name,
-                "width": width,
-                "height": height,
-                "gray_levels": effective_palette(profile, cli.customwidth, cli.customheight).levels(),
-                "chapters": total_chapters,
-                "pages": total_pages,
-            }),
-        )
-        .map_err(event_write_failure)?;
-
-    if cli.dry_run {
-        if events.enabled() {
-            events
-                .emit(
-                    "result",
-                    json!({
-                        "status": "completed",
-                        "operation": "convert",
-                        "dry_run": true,
-                        "manga": title,
-                        "author": author,
-                        "format": format,
-                        "profile": profile.code,
-                        "width": width,
-                        "height": height,
-                        "chapters": total_chapters,
-                        "source_pages": total_pages,
-                        "output_path": output_path_absolute,
-                        "written": false,
-                    }),
-                )
-                .map_err(event_write_failure)?;
-        } else {
-            write_human_report(&mut std::io::stdout().lock(), |stdout| {
-                writeln!(
-                    stdout,
-                    "dry run -- no pages will be processed, nothing will be written"
-                )?;
-                writeln!(stdout, "title: {title}")?;
-                writeln!(stdout, "author: {author}")?;
-                writeln!(stdout, "format: {format}")?;
-                writeln!(
-                    stdout,
-                    "device: {} ({width}x{height})",
-                    profile.display_name
-                )?;
-                writeln!(stdout, "chapters: {total_chapters}, pages: {total_pages}")?;
-                writeln!(stdout, "would write: {}", output_path.display())
-            })
-            .context("writing the dry-run summary")?;
-        }
-        return Ok(());
-    }
 
     // Webtoon mode works on strips, not pages: each chapter's images are
     // joined and cut again before anything else happens to them, so the

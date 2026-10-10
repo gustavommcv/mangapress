@@ -1,4 +1,5 @@
 mod args;
+mod configuration;
 mod discovery;
 mod output;
 mod processing;
@@ -6,11 +7,11 @@ mod protocol;
 mod reporting;
 
 use anyhow::{bail, Context};
-use args::{
-    automatic_format, format_name, pipeline_format, Cli, Cropping, Format, InterPanelCrop,
-    MetadataTitle, Splitter,
-};
+#[cfg(test)]
+use args::automatic_format;
+use args::{format_name, Cli, Format, MetadataTitle};
 use clap::{error::ErrorKind, Parser};
+use configuration::ResolvedConversion;
 #[cfg(test)]
 use discovery::COVERS_FOLDER;
 use discovery::{cover_by_convention, read_spread_labels, spread_labels_beside};
@@ -22,10 +23,12 @@ use mangapress_core::manga::ReadingDirection;
 use mangapress_core::metadata::{self, MetadataTitleMode};
 #[cfg(test)]
 use mangapress_core::pipeline::OutputFormat;
-use mangapress_core::pipeline::{
-    effective_default_jpeg_quality, effective_palette, CroppingMode, PipelineOptions, SplitterMode,
-};
-use mangapress_core::profile::{Family, Profile};
+use mangapress_core::pipeline::{effective_default_jpeg_quality, effective_palette};
+#[cfg(test)]
+use mangapress_core::pipeline::{CroppingMode, PipelineOptions, SplitterMode};
+use mangapress_core::profile::Family;
+#[cfg(test)]
+use mangapress_core::profile::Profile;
 use processing::process_chapter_pages;
 use protocol::{event_write_failure, EventSink, RunFailure};
 use reporting::{absolute_display, utc_timestamp, warn, write_human_report};
@@ -145,87 +148,15 @@ fn run<W: std::io::Write + Send>(
         return Ok(());
     }
     let quiet = cli.quiet || events.enabled();
-    // Guaranteed present: clap's `required_unless_present` on `--list-profiles`
-    // means we only get here when `input` was actually passed.
-    let input = cli
-        .input
-        .clone()
-        .expect("input is required unless --list-profiles or --protocol-version");
-    let input_path = absolute_display(&input);
-
-    *failure = RunFailure::new(
-        "unknown_profile",
-        "configuration",
-        true,
-        format!("Unknown device profile '{}'.", cli.profile),
-        match Profile::closest_code(&cli.profile) {
-            Some(suggestion) => format!(
-                "unknown device profile '{}' -- did you mean '{suggestion}'? (see --list-profiles)",
-                cli.profile
-            ),
-            None => format!(
-                "unknown device profile '{}' (see --list-profiles)",
-                cli.profile
-            ),
-        },
-    );
-    let profile = Profile::by_code(&cli.profile).context(failure.diagnostic.clone())?;
-
-    if !input.exists() {
-        *failure = RunFailure::new(
-            "input_not_found",
-            "inspect",
-            true,
-            "The input path does not exist.",
-            format!("input path does not exist: {}", input.display()),
-        )
-        .with_path(input_path.clone());
-        bail!("input path does not exist: {}", input.display());
-    }
-
-    let mut cli = cli;
-    if cli.format == Format::Auto {
-        cli.format = automatic_format(profile);
-    }
-    let cli = cli;
-    let output_format = pipeline_format(cli.format);
-    let (width, height) =
-        output_format.target_resolution(profile, cli.customwidth, cli.customheight);
-    if width == 0 || height == 0 {
-        *failure = RunFailure::new(
-            "invalid_resolution",
-            "configuration",
-            true,
-            "Set both a target width and height for this device profile.",
-            format!(
-                "resolved target resolution is {width}x{height} — profile '{}' has no built-in resolution, pass both --customwidth and --customheight to set one",
-                cli.profile
-            ),
-        );
-        bail!(
-            "resolved target resolution is {width}x{height} — profile '{}' has no built-in \
-             resolution, pass both --customwidth and --customheight to set one",
-            cli.profile
-        );
-    }
-
-    if cli.nested_toc && cli.format != Format::Epub {
-        *failure = RunFailure::new(
-            "nested_toc_unsupported_format",
-            "configuration",
-            true,
-            "A two-level table of contents is only available for EPUB output right now.",
-            format!(
-                "--nested-toc was combined with --format {:?}, which has no chapter/volume table of \
-                 contents mechanism yet — see docs/adr/0012-nested-toc-for-combined-volumes.md",
-                cli.format
-            ),
-        );
-        bail!(
-            "--nested-toc requires --format epub, got --format {:?}",
-            cli.format
-        );
-    }
+    let ResolvedConversion {
+        cli,
+        input,
+        input_path,
+        profile,
+        width,
+        height,
+        output_format,
+    } = configuration::resolve(cli, failure)?;
 
     let fallback_title = input
         .file_stem()
@@ -796,58 +727,7 @@ fn run<W: std::io::Write + Send>(
         (source_chapters, total_pages)
     };
 
-    let pipeline_options = PipelineOptions {
-        profile,
-        width_override: cli.customwidth,
-        height_override: cli.customheight,
-        // Upstream's webtoon mode forces these four whatever was asked for.
-        manga_style: cli.manga_style && !cli.webtoon,
-        cropping: match cli.cropping {
-            Cropping::Disabled => CroppingMode::Disabled,
-            Cropping::Margins => CroppingMode::Margins,
-            Cropping::MarginsAndPageNumbers => CroppingMode::MarginsAndPageNumbers,
-        },
-        cropping_power: cli.croppingpower,
-        cropping_minimum: cli.croppingminimum,
-        preserve_margin_percent: cli.preservemargin,
-        inter_panel_crop: match cli.interpanelcrop {
-            InterPanelCrop::Disabled => {
-                mangapress_core::crop::inter_panel::InterPanelMode::Disabled
-            }
-            InterPanelCrop::Horizontal => {
-                mangapress_core::crop::inter_panel::InterPanelMode::Horizontal
-            }
-            InterPanelCrop::Both => mangapress_core::crop::inter_panel::InterPanelMode::Both,
-        },
-        splitter: match cli.splitter {
-            Splitter::Split => SplitterMode::Split,
-            Splitter::Rotate => SplitterMode::Rotate,
-            Splitter::Both => SplitterMode::Both,
-        },
-        upscale: cli.upscale && !cli.webtoon,
-        stretch: cli.stretch,
-        wallpaper: cli.wallpaper,
-        white_borders: cli.whiteborders || cli.webtoon,
-        black_borders: cli.blackborders && !cli.webtoon,
-        webtoon: cli.webtoon,
-        no_rotate: cli.norotate,
-        rotate_first: cli.rotatefirst,
-        maximize_strips: cli.maximizestrips,
-        color_autocontrast: cli.colorautocontrast,
-        force_color: cli.forcecolor,
-        force_png_rgb: cli.force_png_rgb,
-        png_legacy: cli.pnglegacy,
-        no_quantize: cli.noquantize,
-        no_processing: cli.noprocessing,
-        rotate_right: cli.rotateright,
-        force_png: cli.forcepng,
-        output_format,
-        gamma: cli.gamma,
-        autolevel: cli.autolevel,
-        noautocontrast: cli.noautocontrast,
-        erase_rainbow: cli.eraserainbow,
-        jpeg_quality: cli.jpeg_quality,
-    };
+    let pipeline_options = configuration::pipeline_options(&cli, profile, output_format);
 
     // Interactive terminals get a live per-page counter (overwritten in
     // place via `\r`); redirected/piped output gets one plain line per

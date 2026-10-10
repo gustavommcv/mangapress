@@ -1,6 +1,12 @@
+use crate::configuration::{self, ResolvedConversion};
+use crate::protocol::{event_write_failure, EventSink, RunFailure};
+use anyhow::bail;
+use mangapress_core::ebook::Chapter;
 use mangapress_core::ebook::Page;
 use mangapress_core::pipeline::{process_page, PipelineOptions, ProcessedPage};
 use rayon::prelude::*;
+use serde_json::json;
+use std::io::{IsTerminal, Write as _};
 use std::sync::Mutex;
 
 /// Processes every page of one chapter, fanning the work out across every
@@ -90,3 +96,342 @@ pub(super) fn process_chapter_pages(
         truncated_sources,
     })
 }
+
+/// Existing prepared chapters and source counts entering page execution.
+pub(super) struct SourceChapters {
+    pub(super) chapters: Vec<Chapter>,
+    pub(super) total_chapters: usize,
+    pub(super) total_pages: usize,
+}
+
+/// Page results and the same options/counts consumed by later book assembly.
+pub(super) struct ProcessedBook {
+    pub(super) chapters: Vec<Chapter>,
+    pub(super) total_pages: usize,
+    pub(super) page_count: usize,
+    pub(super) pipeline_options: PipelineOptions,
+}
+
+struct ChapterContext<'a, W: std::io::Write + Send> {
+    title: &'a str,
+    input_path: &'a str,
+    total_chapters: usize,
+    total_pages: usize,
+    pipeline_options: &'a PipelineOptions,
+    quiet: bool,
+    progress_is_tty: bool,
+    events: &'a EventSink<W>,
+}
+
+pub(super) fn process_book<W: std::io::Write + Send>(
+    source: SourceChapters,
+    conversion: &ResolvedConversion,
+    title: &str,
+    quiet: bool,
+    events: &EventSink<W>,
+    failure: &mut RunFailure,
+) -> anyhow::Result<ProcessedBook> {
+    let SourceChapters {
+        chapters: source_chapters,
+        total_chapters,
+        total_pages,
+    } = source;
+    let ResolvedConversion {
+        cli,
+        profile,
+        output_format,
+        ..
+    } = conversion;
+    let (source_chapters, total_pages) =
+        cut_webtoon(source_chapters, total_pages, conversion, title, failure)?;
+    let pipeline_options = configuration::pipeline_options(cli, profile, *output_format);
+
+    // Interactive terminals get a live per-page counter (overwritten in
+    // place via `\r`); redirected/piped output gets one plain line per
+    // chapter instead, so a log file doesn't fill up with carriage returns.
+    let progress_is_tty = !events.enabled() && std::io::stderr().is_terminal();
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "process",
+                "state": "started",
+                "manga": title.to_owned(),
+                "chapters": total_chapters,
+                "pages": total_pages,
+            }),
+        )
+        .map_err(event_write_failure)?;
+
+    let context = ChapterContext {
+        title,
+        input_path: &conversion.input_path,
+        total_chapters,
+        total_pages,
+        pipeline_options: &pipeline_options,
+        quiet,
+        progress_is_tty,
+        events,
+    };
+    let (processed_chapters, page_count) = process_chapters(source_chapters, &context, failure)?;
+    if !quiet {
+        if progress_is_tty {
+            eprintln!();
+        }
+        eprintln!("processed {page_count} page(s)");
+    }
+    events
+        .emit(
+            "stage",
+            json!({
+                "stage": "process",
+                "state": "completed",
+                "manga": title.to_owned(),
+                "source_pages": total_pages,
+                "output_pages": page_count,
+            }),
+        )
+        .map_err(event_write_failure)?;
+
+    Ok(ProcessedBook {
+        chapters: processed_chapters,
+        total_pages,
+        page_count,
+        pipeline_options,
+    })
+}
+
+fn cut_webtoon(
+    source_chapters: Vec<Chapter>,
+    total_pages: usize,
+    conversion: &ResolvedConversion,
+    title: &str,
+    failure: &mut RunFailure,
+) -> anyhow::Result<(Vec<Chapter>, usize)> {
+    let cli = &conversion.cli;
+    let device = (conversion.width, conversion.height);
+    // Webtoon mode works on strips, not pages: each chapter's images are
+    // joined and cut again before anything else happens to them, so the
+    // page count from here on is the cut pages'.
+    Ok(if cli.webtoon {
+        let mut chapters = source_chapters;
+        for chapter in &mut chapters {
+            let sources: Vec<&[u8]> = chapter
+                .pages
+                .iter()
+                .map(|page| page.bytes.as_slice())
+                .collect();
+            match mangapress_core::webtoon::pages_from_chapter(&sources, device) {
+                Ok(pages) => {
+                    chapter.pages = pages
+                        .into_iter()
+                        .map(|bytes| Page {
+                            extension: "png".to_string(),
+                            bytes,
+                            ..Default::default()
+                        })
+                        .collect();
+                }
+                Err(error) => {
+                    *failure = RunFailure::new(
+                        "webtoon_split_failed",
+                        "process",
+                        true,
+                        format!("Couldn't cut chapter '{}' into pages.", chapter.title),
+                        format!("cutting chapter '{}' into pages: {error}", chapter.title),
+                    )
+                    .with_manga(title.to_owned())
+                    .with_chapter(chapter.title.to_owned());
+                    bail!("cutting chapter '{}' into pages: {error}", chapter.title);
+                }
+            }
+        }
+        let total = chapters.iter().map(|chapter| chapter.pages.len()).sum();
+        (chapters, total)
+    } else {
+        (source_chapters, total_pages)
+    })
+}
+
+fn process_chapters<W: std::io::Write + Send>(
+    source_chapters: Vec<Chapter>,
+    context: &ChapterContext<'_, W>,
+    failure: &mut RunFailure,
+) -> anyhow::Result<(Vec<Chapter>, usize)> {
+    let ChapterContext {
+        title,
+        input_path,
+        total_chapters,
+        total_pages,
+        pipeline_options,
+        quiet,
+        progress_is_tty,
+        events,
+    } = *context;
+    // Pages within a chapter are independent of each other -- nothing about
+    // processing one depends on another -- so they're fanned out across
+    // every available core via `process_chapter_pages` rather than one at a
+    // time, matching upstream KCC's own `multiprocessing.Pool()`-based
+    // fan-out, while still preserving page order in the output.
+    let mut processed_chapters = Vec::with_capacity(total_chapters);
+    let mut page_count = 0usize;
+    let mut source_pages_done = 0usize;
+    for (chapter_index, chapter) in source_chapters.into_iter().enumerate() {
+        // Pages lying directly in the book have no folder to name them: the book's title does,
+        // as it does in the contents.
+        let chapter_title = if chapter.relative_path.as_os_str().is_empty() {
+            title.to_owned()
+        } else {
+            chapter.title.to_owned()
+        };
+        let chapter_source_len = chapter.pages.len();
+        events
+            .emit(
+                "chapter",
+                json!({
+                    "state": "started",
+                    "stage": "process",
+                    "manga": title.to_owned(),
+                    "chapter": chapter_title.to_owned(),
+                    "chapter_index": chapter_index + 1,
+                    "chapter_count": total_chapters,
+                    "source_pages": chapter_source_len,
+                }),
+            )
+            .map_err(event_write_failure)?;
+        let pages = match process_chapter_pages(
+            &chapter.pages,
+            pipeline_options,
+            chapter_index == 0,
+            |done_in_chapter, page_number| {
+                let done = source_pages_done + done_in_chapter;
+                if events.enabled() {
+                    events.emit(
+                        "page",
+                        json!({
+                            "state": "completed",
+                            "stage": "process",
+                            "manga": title.to_owned(),
+                            "chapter": chapter_title.to_owned(),
+                            "chapter_index": chapter_index + 1,
+                            "page": page_number,
+                            "completed": done,
+                            "total": total_pages,
+                        }),
+                    )?;
+                } else if !quiet && progress_is_tty {
+                    eprint!("\rprocessing page {done}/{total_pages}");
+                    std::io::stderr().flush().ok();
+                }
+                Ok(())
+            },
+        ) {
+            Ok(processed) => {
+                warn_truncated_pages(
+                    &chapter,
+                    &chapter_title,
+                    &processed.truncated_sources,
+                    context,
+                )?;
+                processed.pages
+            }
+            Err(error) => {
+                *failure = RunFailure::new(
+                    "page_processing_failed",
+                    "process",
+                    true,
+                    format!(
+                        "Couldn't process page {} in chapter '{}'.",
+                        error.page, chapter_title
+                    ),
+                    format!(
+                        "processing page {} in chapter '{}': {}",
+                        error.page, chapter_title, error.diagnostic
+                    ),
+                )
+                .with_manga(title.to_owned())
+                .with_chapter(chapter_title.to_owned())
+                .with_page(error.page)
+                .with_path(input_path.to_owned());
+                bail!("{}", failure.diagnostic);
+            }
+        };
+
+        page_count += pages.len();
+        source_pages_done += chapter_source_len;
+        events
+            .emit(
+                "chapter",
+                json!({
+                    "state": "completed",
+                    "stage": "process",
+                    "manga": title.to_owned(),
+                    "chapter": chapter_title,
+                    "chapter_index": chapter_index + 1,
+                    "chapter_count": total_chapters,
+                    "source_pages": chapter_source_len,
+                    "output_pages": pages.len(),
+                    "completed": source_pages_done,
+                    "total": total_pages,
+                }),
+            )
+            .map_err(event_write_failure)?;
+        processed_chapters.push(Chapter {
+            relative_path: chapter.relative_path,
+            title: chapter.title,
+            pages,
+        });
+        if !quiet && !progress_is_tty {
+            eprintln!(
+                "chapter {}/{total_chapters} done ({source_pages_done}/{total_pages} pages so far)",
+                chapter_index + 1,
+            );
+        }
+    }
+    Ok((processed_chapters, page_count))
+}
+
+fn warn_truncated_pages<W: std::io::Write + Send>(
+    chapter: &Chapter,
+    chapter_title: &str,
+    truncated_sources: &[usize],
+    context: &ChapterContext<'_, W>,
+) -> anyhow::Result<()> {
+    let input_path = context.input_path;
+    let events = context.events;
+    for &position in truncated_sources {
+        let file = chapter.pages[position]
+            .source_path
+            .as_ref()
+            .map(|path| path.display().to_string());
+        let message = format!(
+            "Page {} of chapter '{}'{} ends before its image does: what was read is kept and the rest of the page is blank.",
+            position + 1,
+            chapter_title,
+            file.as_ref().map(|file| format!(" ({file})")).unwrap_or_default(),
+        );
+        if events.enabled() {
+            events
+                .emit(
+                    "warning",
+                    json!({
+                        "severity": "warning",
+                        "code": "page_truncated",
+                        "stage": "process",
+                        "path": file.clone().unwrap_or_else(|| input_path.to_owned()),
+                        "recoverable": true,
+                        "message": message,
+                        "chapter": chapter_title.to_owned(),
+                        "page": position + 1,
+                    }),
+                )
+                .map_err(event_write_failure)?;
+        } else {
+            eprintln!("warning: {message}");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

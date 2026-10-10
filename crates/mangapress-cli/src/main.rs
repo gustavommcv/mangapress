@@ -20,7 +20,9 @@ use discovery::COVERS_FOLDER;
 #[cfg(test)]
 use discovery::{cover_by_convention, read_spread_labels, spread_labels_beside};
 use inspection::{InputMetadata, ReadInput};
-use mangapress_core::ebook::{cbz_out, cover, epub, pdf, Chapter, Page};
+#[cfg(test)]
+use mangapress_core::ebook::Page;
+use mangapress_core::ebook::{cbz_out, cover, epub, pdf};
 use mangapress_core::manga::ReadingDirection;
 use mangapress_core::pipeline::effective_default_jpeg_quality;
 #[cfg(test)]
@@ -32,12 +34,14 @@ use mangapress_core::profile::Family;
 use mangapress_core::profile::Profile;
 use planning::{BookSummary, Outcome, PlannedOutput};
 use preparation::PreparedPages;
+#[cfg(test)]
 use processing::process_chapter_pages;
+use processing::{ProcessedBook, SourceChapters};
 use protocol::{event_write_failure, EventSink, RunFailure};
 use reporting::{utc_timestamp, write_human_report};
 use serde_json::json;
 use std::ffi::OsString;
-use std::io::{IsTerminal, Write as _};
+use std::io::Write as _;
 #[cfg(test)]
 use std::path::PathBuf;
 
@@ -191,242 +195,32 @@ fn run<W: std::io::Write + Send>(
     else {
         return Ok(());
     };
+    let ProcessedBook {
+        chapters: processed_chapters,
+        total_pages,
+        page_count,
+        pipeline_options,
+    } = processing::process_book(
+        SourceChapters {
+            chapters: source_chapters,
+            total_chapters,
+            total_pages,
+        },
+        &conversion,
+        &title,
+        quiet,
+        events,
+        failure,
+    )?;
     let ResolvedConversion {
         cli,
         input: _,
-        input_path,
+        input_path: _,
         profile,
         width,
         height,
-        output_format,
+        output_format: _,
     } = conversion;
-    let device = (width, height);
-
-    // Webtoon mode works on strips, not pages: each chapter's images are
-    // joined and cut again before anything else happens to them, so the
-    // page count from here on is the cut pages'.
-    let (source_chapters, total_pages) = if cli.webtoon {
-        let mut chapters = source_chapters;
-        for chapter in &mut chapters {
-            let sources: Vec<&[u8]> = chapter
-                .pages
-                .iter()
-                .map(|page| page.bytes.as_slice())
-                .collect();
-            match mangapress_core::webtoon::pages_from_chapter(&sources, device) {
-                Ok(pages) => {
-                    chapter.pages = pages
-                        .into_iter()
-                        .map(|bytes| Page {
-                            extension: "png".to_string(),
-                            bytes,
-                            ..Default::default()
-                        })
-                        .collect();
-                }
-                Err(error) => {
-                    *failure = RunFailure::new(
-                        "webtoon_split_failed",
-                        "process",
-                        true,
-                        format!("Couldn't cut chapter '{}' into pages.", chapter.title),
-                        format!("cutting chapter '{}' into pages: {error}", chapter.title),
-                    )
-                    .with_manga(title.clone())
-                    .with_chapter(chapter.title.clone());
-                    bail!("cutting chapter '{}' into pages: {error}", chapter.title);
-                }
-            }
-        }
-        let total = chapters.iter().map(|chapter| chapter.pages.len()).sum();
-        (chapters, total)
-    } else {
-        (source_chapters, total_pages)
-    };
-
-    let pipeline_options = configuration::pipeline_options(&cli, profile, output_format);
-
-    // Interactive terminals get a live per-page counter (overwritten in
-    // place via `\r`); redirected/piped output gets one plain line per
-    // chapter instead, so a log file doesn't fill up with carriage returns.
-    let progress_is_tty = !events.enabled() && std::io::stderr().is_terminal();
-    events
-        .emit(
-            "stage",
-            json!({
-                "stage": "process",
-                "state": "started",
-                "manga": title.clone(),
-                "chapters": total_chapters,
-                "pages": total_pages,
-            }),
-        )
-        .map_err(event_write_failure)?;
-
-    // Pages within a chapter are independent of each other -- nothing about
-    // processing one depends on another -- so they're fanned out across
-    // every available core via `process_chapter_pages` rather than one at a
-    // time, matching upstream KCC's own `multiprocessing.Pool()`-based
-    // fan-out, while still preserving page order in the output.
-    let mut processed_chapters = Vec::with_capacity(total_chapters);
-    let mut page_count = 0usize;
-    let mut source_pages_done = 0usize;
-    for (chapter_index, chapter) in source_chapters.into_iter().enumerate() {
-        // Pages lying directly in the book have no folder to name them: the book's title does,
-        // as it does in the contents.
-        let chapter_title = if chapter.relative_path.as_os_str().is_empty() {
-            title.clone()
-        } else {
-            chapter.title.clone()
-        };
-        let chapter_source_len = chapter.pages.len();
-        events
-            .emit(
-                "chapter",
-                json!({
-                    "state": "started",
-                    "stage": "process",
-                    "manga": title.clone(),
-                    "chapter": chapter_title.clone(),
-                    "chapter_index": chapter_index + 1,
-                    "chapter_count": total_chapters,
-                    "source_pages": chapter_source_len,
-                }),
-            )
-            .map_err(event_write_failure)?;
-        let pages = match process_chapter_pages(
-            &chapter.pages,
-            &pipeline_options,
-            chapter_index == 0,
-            |done_in_chapter, page_number| {
-                let done = source_pages_done + done_in_chapter;
-                if events.enabled() {
-                    events.emit(
-                        "page",
-                        json!({
-                            "state": "completed",
-                            "stage": "process",
-                            "manga": title.clone(),
-                            "chapter": chapter_title.clone(),
-                            "chapter_index": chapter_index + 1,
-                            "page": page_number,
-                            "completed": done,
-                            "total": total_pages,
-                        }),
-                    )?;
-                } else if !quiet && progress_is_tty {
-                    eprint!("\rprocessing page {done}/{total_pages}");
-                    std::io::stderr().flush().ok();
-                }
-                Ok(())
-            },
-        ) {
-            Ok(processed) => {
-                for &position in &processed.truncated_sources {
-                    let file = chapter.pages[position]
-                        .source_path
-                        .as_ref()
-                        .map(|path| path.display().to_string());
-                    let message = format!(
-                        "Page {} of chapter '{}'{} ends before its image does: what was read is kept and the rest of the page is blank.",
-                        position + 1,
-                        chapter_title,
-                        file.as_ref().map(|file| format!(" ({file})")).unwrap_or_default(),
-                    );
-                    if events.enabled() {
-                        events
-                            .emit(
-                                "warning",
-                                json!({
-                                    "severity": "warning",
-                                    "code": "page_truncated",
-                                    "stage": "process",
-                                    "path": file.clone().unwrap_or_else(|| input_path.clone()),
-                                    "recoverable": true,
-                                    "message": message,
-                                    "chapter": chapter_title.clone(),
-                                    "page": position + 1,
-                                }),
-                            )
-                            .map_err(event_write_failure)?;
-                    } else {
-                        eprintln!("warning: {message}");
-                    }
-                }
-                processed.pages
-            }
-            Err(error) => {
-                *failure = RunFailure::new(
-                    "page_processing_failed",
-                    "process",
-                    true,
-                    format!(
-                        "Couldn't process page {} in chapter '{}'.",
-                        error.page, chapter_title
-                    ),
-                    format!(
-                        "processing page {} in chapter '{}': {}",
-                        error.page, chapter_title, error.diagnostic
-                    ),
-                )
-                .with_manga(title.clone())
-                .with_chapter(chapter_title.clone())
-                .with_page(error.page)
-                .with_path(input_path.clone());
-                bail!("{}", failure.diagnostic);
-            }
-        };
-
-        page_count += pages.len();
-        source_pages_done += chapter_source_len;
-        events
-            .emit(
-                "chapter",
-                json!({
-                    "state": "completed",
-                    "stage": "process",
-                    "manga": title.clone(),
-                    "chapter": chapter_title,
-                    "chapter_index": chapter_index + 1,
-                    "chapter_count": total_chapters,
-                    "source_pages": chapter_source_len,
-                    "output_pages": pages.len(),
-                    "completed": source_pages_done,
-                    "total": total_pages,
-                }),
-            )
-            .map_err(event_write_failure)?;
-        processed_chapters.push(Chapter {
-            relative_path: chapter.relative_path,
-            title: chapter.title,
-            pages,
-        });
-        if !quiet && !progress_is_tty {
-            eprintln!(
-                "chapter {}/{total_chapters} done ({source_pages_done}/{total_pages} pages so far)",
-                chapter_index + 1,
-            );
-        }
-    }
-    if !quiet {
-        if progress_is_tty {
-            eprintln!();
-        }
-        eprintln!("processed {page_count} page(s)");
-    }
-    events
-        .emit(
-            "stage",
-            json!({
-                "stage": "process",
-                "state": "completed",
-                "manga": title.clone(),
-                "source_pages": total_pages,
-                "output_pages": page_count,
-            }),
-        )
-        .map_err(event_write_failure)?;
-
     events
         .emit(
             "stage",

@@ -35,7 +35,14 @@ fn comic_info() -> &'static str {
 fn convert(book: &Path, output: &Path, extra: &[&str]) -> Output {
     Command::new(binary())
         .arg(book)
-        .args(["--profile", "KV", "--json-events", "--output"])
+        .args([
+            "--profile",
+            "KV",
+            "--format",
+            "epub",
+            "--json-events",
+            "--output",
+        ])
         .arg(output)
         .args(extra)
         .output()

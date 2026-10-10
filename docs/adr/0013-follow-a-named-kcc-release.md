@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Accepted. The row for `--format auto` was replaced by [ADR 0024](0024-auto-format-is-cbz.md).
 
 ## Context
 

@@ -203,7 +203,7 @@ fn conversion_stages_before_completion_and_returns_the_existing_publication_hand
             .join("books")
             .join("book.epub");
         {
-            let mut config = conversion(directory.path(), &[]);
+            let mut config = conversion(directory.path(), &["--format", "epub"]);
             config.cli.output = Some(destination.clone());
             let mut bytes = Vec::new();
             let sink = EventSink::new(

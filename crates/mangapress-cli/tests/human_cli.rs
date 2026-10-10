@@ -82,7 +82,7 @@ fn usage_and_runtime_errors_keep_their_exit_codes_and_streams() {
 fn human_dry_run_reports_the_resolved_format_without_creating_output() {
     let input = fixture_folder();
     let destination = tempfile::tempdir().unwrap();
-    for (profile, format) in [("K11", "epub"), ("KDX", "cbz"), ("Rmk2", "pdf")] {
+    for (profile, format) in [("K11", "cbz"), ("KDX", "cbz"), ("Rmk2", "pdf")] {
         let path = destination
             .path()
             .join("not-created")

@@ -54,7 +54,7 @@ fn configuration_errors_keep_precedence_before_inspection_or_output_staging() {
         ),
         (
             input.path(),
-            vec!["--profile", "KDX", "--nested-toc"],
+            vec!["--profile", "KDX", "--format", "cbz", "--nested-toc"],
             "nested_toc_unsupported_format",
             "configuration",
             "--nested-toc requires --format epub, got --format Cbz",

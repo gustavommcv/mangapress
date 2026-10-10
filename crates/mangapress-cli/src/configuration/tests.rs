@@ -55,8 +55,9 @@ fn automatic_format_is_resolved_before_the_processing_target() {
     let input = tempfile::tempdir().unwrap();
     for (code, format, processing_format, target) in [
         ("KDX", Format::Cbz, OutputFormat::Cbz, (824, 1200)),
-        ("K11", Format::Epub, OutputFormat::Epub, (1072, 1448)),
-        ("KS3", Format::Epub, OutputFormat::Epub, (1920, 2648)),
+        ("K11", Format::Cbz, OutputFormat::Cbz, (1072, 1448)),
+        ("KoC", Format::Epub, OutputFormat::Epub, (1072, 1448)),
+        ("KS3", Format::Cbz, OutputFormat::Cbz, (1986, 2648)),
         ("Rmk2", Format::Pdf, OutputFormat::Pdf, (1404, 1872)),
     ] {
         let resolved = settings(input.path(), &["--profile", code]);
@@ -204,10 +205,17 @@ fn invalid_resolution_precedes_nested_toc_validation() {
 #[test]
 fn nested_toc_compatibility_uses_the_resolved_format() {
     let input = tempfile::tempdir().unwrap();
-    for (code, name) in [("KDX", "Cbz"), ("Rmk2", "Pdf")] {
+    for (code, flag, name) in [
+        ("KDX", "cbz", "Cbz"),
+        ("K11", "cbz", "Cbz"),
+        ("Rmk2", "pdf", "Pdf"),
+    ] {
         let mut failure = initial_failure();
         let error = resolve(
-            arguments(input.path(), &["--profile", code, "--nested-toc"]),
+            arguments(
+                input.path(),
+                &["--profile", code, "--format", flag, "--nested-toc"],
+            ),
             &mut failure,
         )
         .unwrap_err();
@@ -222,12 +230,23 @@ fn nested_toc_compatibility_uses_the_resolved_format() {
             .contains("0012-nested-toc-for-combined-volumes.md"));
     }
     for options in [
-        vec!["--profile", "K11", "--nested-toc"],
         vec!["--profile", "KDX", "--format", "epub", "--nested-toc"],
+        vec!["--profile", "K11", "--format", "epub", "--nested-toc"],
     ] {
         let resolved = settings(input.path(), &options);
         assert_eq!(resolved.cli.format, Format::Epub);
         assert!(resolved.cli.nested_toc);
+    }
+}
+
+#[test]
+fn nested_toc_makes_an_automatic_format_an_epub_on_every_device() {
+    let input = tempfile::tempdir().unwrap();
+    for code in ["KDX", "K11", "KoC", "KS3", "Rmk2"] {
+        let resolved = settings(input.path(), &["--profile", code, "--nested-toc"]);
+        assert_eq!(resolved.cli.format, Format::Epub, "{code}");
+        assert_eq!(resolved.output_format, OutputFormat::Epub, "{code}");
+        assert!(resolved.cli.nested_toc, "{code}");
     }
 }
 
